@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>MutualAid Detroit — cross-agency resource visibility</title>
+<meta name="description" content="A shared resource registry for Detroit emergency response. See what every agency has, and where, during an incident." />
+<style>
+  :root{
+    --bg:#0B0D10; --panel:#14171C; --line:rgba(235,235,245,.13);
+    --text:#EDEFF2; --mute:#98A1AE;
+    --alert:#E5484D; --ready:#3FBF7F; --pending:#E8B339;
+    --tech:ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    line-height:1.55;-webkit-text-size-adjust:100%}
+  header{padding:calc(22px + env(safe-area-inset-top,0px)) 22px 20px;
+    border-bottom:1px solid var(--line)}
+  .mark{font-size:21px;font-weight:800;letter-spacing:.3px}
+  .mark b{color:var(--alert)}
+  .tag{font-family:var(--tech);font-size:10.5px;letter-spacing:1.4px;text-transform:uppercase;
+    color:var(--mute);margin-top:6px}
+  main{max-width:820px;margin:0 auto;padding:24px 22px 80px}
+  h2{font-family:var(--tech);font-size:11px;letter-spacing:1.5px;text-transform:uppercase;
+    color:var(--mute);margin:30px 0 10px}
+  .lede{font-size:19px;line-height:1.45;margin:6px 0 0}
+  .q{border-left:3px solid var(--alert);padding:12px 0 12px 16px;margin:20px 0;color:var(--mute)}
+  .grid{display:grid;gap:10px;margin-top:10px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+  .card .r{display:flex;align-items:center;gap:10px;justify-content:space-between}
+  .name{font-weight:700}
+  .meta{font-family:var(--tech);font-size:11px;color:var(--mute);margin-top:3px}
+  .pill{font-family:var(--tech);font-size:10px;letter-spacing:1px;text-transform:uppercase;
+    padding:4px 9px;border-radius:999px;white-space:nowrap}
+  .ready{background:rgba(63,191,127,.14);color:var(--ready)}
+  .out{background:rgba(229,72,77,.14);color:var(--alert)}
+  .soon{background:rgba(232,179,57,.14);color:var(--pending)}
+  footer{color:var(--mute);font-size:12.5px;border-top:1px solid var(--line);
+    margin-top:40px;padding-top:16px}
+</style>
+</head>
+<body>
+<header>
+  <div class="mark">Mutual<b>Aid</b> Detroit</div>
+  <div class="tag">Cross-agency resource visibility · Venture 313 Buildathon</div>
+</header>
+
+<main>
+  <p class="lede">When an emergency crosses agency lines, nobody can see what the other
+  agencies have.</p>
+
+  <div class="q">
+    Five agencies can share a building and still not share a view of their resources. During a
+    flood or a multi-alarm fire, communication is the first thing to fail — and the question
+    nobody can answer quickly is the simplest one: <strong>who has what, and where is it now?</strong>
+  </div>
+
+  <h2>What this is</h2>
+  <p>A shared registry of response resources — vehicles, generators, pumps, crews, shelter
+  capacity — posted by the agencies that own them, placed on a map, and exposed to an AI
+  assistant so dispatch can ask for what they need in plain language instead of working a
+  phone tree.</p>
+
+  <h2>Resources near an incident — sample</h2>
+  <div class="grid" id="list"></div>
+
+  <footer>
+    Day 1 build · started Sept 17, 2026 · built solo<br>
+    Sample data shown for demonstration. Not connected to live agency systems.
+  </footer>
+</main>
+
+<script>
+/* Day 1: static sample so the shape of the thing is visible and testable before the database
+   is wired up. Replaced by a live Supabase query next. */
+var SAMPLE = [
+  {name:"Portable pump, 4in",   agency:"DFD Engine 30",       dist:"0.8 mi", status:"ready", contact:"Dispatch 313-xxx"},
+  {name:"Light tower, towable", agency:"DPW Yard 3",          dist:"1.2 mi", status:"ready", contact:"Yard supervisor"},
+  {name:"Generator, 45kW",      agency:"DTE staging",         dist:"1.9 mi", status:"soon",  contact:"Storm desk"},
+  {name:"High-water vehicle",   agency:"DFD Special Ops",     dist:"2.3 mi", status:"out",   contact:"Special Ops"},
+  {name:"Warming shelter, 60",  agency:"Rec Center — Butzel", dist:"2.6 mi", status:"ready", contact:"Site lead"}
+];
+var LABEL = {ready:"Available", soon:"En route", out:"Committed"};
+document.getElementById("list").innerHTML = SAMPLE.map(function(r){
+  return '<div class="card"><div class="r"><div>'+
+         '<div class="name">'+r.name+'</div>'+
+         '<div class="meta">'+r.agency+' · '+r.dist+' · '+r.contact+'</div>'+
+         '</div><span class="pill '+r.status+'">'+LABEL[r.status]+'</span></div></div>';
+}).join("");
+</script>
+</body>
+</html>
