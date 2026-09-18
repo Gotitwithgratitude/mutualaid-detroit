@@ -91,6 +91,27 @@
   #answer .box b{color:#C4B5FD}
   #answer .why{display:block;margin-top:7px;font-family:var(--tech);font-size:10.5px;
     color:var(--mute);letter-spacing:.3px}
+  #status{position:absolute;inset:0;z-index:9;background:rgba(6,8,10,.86);display:none;
+    align-items:flex-end}
+  #status.on{display:flex}
+  .stgrid{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin:14px 0 4px}
+  .stbtn{border:1px solid var(--line);border-radius:11px;padding:14px 10px;font-size:14.5px;
+    font-weight:700;font-family:inherit;cursor:pointer;background:var(--panel2);color:var(--text)}
+  .stbtn:active{transform:scale(.98)}
+  .stbtn.available{color:var(--ready);border-color:rgba(63,191,127,.45)}
+  .stbtn.en_route{color:var(--pending);border-color:rgba(232,179,57,.45)}
+  .stbtn.committed{color:var(--alert);border-color:rgba(229,72,77,.45)}
+  .stbtn.out_of_service{color:var(--mute)}
+  .stbtn.current{outline:2px solid currentColor;outline-offset:-2px}
+  #recent{padding:2px 14px 10px;display:none}
+  #recent.on{display:block}
+  #recent .rhead{font-family:var(--tech);font-size:10px;letter-spacing:1.2px;text-transform:uppercase;
+    color:var(--mute);margin-bottom:6px}
+  #recent .chip{display:inline-block;font-size:12px;background:var(--panel2);
+    border:1px solid var(--line);border-radius:999px;padding:5px 10px;margin:0 6px 6px 0;
+    color:var(--text)}
+  #recent .chip i{font-style:normal;font-family:var(--tech);font-size:10px;color:var(--mute);
+    margin-left:5px}
   #toast{position:fixed;left:50%;bottom:calc(18px + env(safe-area-inset-bottom,0px));
     transform:translate(-50%,120%);z-index:20;max-width:min(560px,92vw);
     background:#1A1E24;border:1px solid var(--line);border-left:3px solid var(--pending);
@@ -123,7 +144,33 @@
     <button class="btn ghost" id="addBtn">+</button>
   </div>
   <div id="answer"></div>
+  <!-- A commander coming on shift asks one question first: what moved while I was away. The
+       registry already knows — updated_at is the answer — so surfacing it costs nothing and is
+       the clearest argument for why keeping status current matters. -->
+  <div id="recent"></div>
   <div id="list"><div class="empty">Loading resources…</div></div>
+</div>
+
+<!-- ═══════════ STATUS ═══════════
+     Adding a resource is the easy half. The half that decides whether this is a living registry
+     or a stale directory is whether anyone comes BACK and changes it — a pump that was available
+     at 6pm and committed at 6:40 is the entire point. So changing status is one tap from the
+     list, not buried in an edit form: the action that has to happen a hundred times a night is
+     the action that has to be cheapest. -->
+<div id="status">
+  <div class="modal">
+    <h3 id="st_name">Resource</h3>
+    <p class="hint" id="st_meta"></p>
+    <div class="stgrid">
+      <button class="stbtn available"      data-s="available">Available</button>
+      <button class="stbtn en_route"       data-s="en_route">En route</button>
+      <button class="stbtn committed"      data-s="committed">Committed</button>
+      <button class="stbtn out_of_service" data-s="out_of_service">Out of service</button>
+    </div>
+    <p class="hint" id="st_note">Updating stamps the time, so everyone else can see how fresh
+    this is.</p>
+    <button class="btn ghost" id="st_close" style="width:100%">Close</button>
+  </div>
 </div>
 
 <div id="add">
@@ -238,6 +285,32 @@ function statusOf(k){ return STATUS[k] || { label:k, color:"#98A1AE" }; }
 
 function clearMarkers(){ markers.forEach(function(m){ m.remove(); }); markers = []; }
 
+/* Age, said the way a person would say it out loud. "492 minutes ago" is technically precise
+   and practically useless — nobody converts that in their head, least of all at 3am. Hours and
+   days past the first hour, plus the actual clock time, because "updated at 9:26 PM" is what
+   gets repeated over a radio. One function, used by the list and by the facts handed to the
+   model, so the app and the AI never describe the same row differently. */
+function humanAge(mins, updatedAt){
+  if(mins == null) return "";
+  var rel;
+  if(mins < 1)        rel = "just now";
+  else if(mins < 60)  rel = mins + " min ago";
+  else if(mins < 1440){
+    var h = Math.floor(mins/60), m = mins % 60;
+    rel = h + "h" + (m ? (" " + m + "m") : "") + " ago";
+  } else {
+    var d = Math.floor(mins/1440), hh = Math.floor((mins % 1440)/60);
+    rel = d + "d" + (hh ? (" " + hh + "h") : "") + " ago";
+  }
+  var clock = "";
+  if(updatedAt){
+    try{
+      clock = new Date(updatedAt).toLocaleTimeString([], { hour:"numeric", minute:"2-digit" });
+    }catch(e){}
+  }
+  return rel + (clock ? (" · " + clock) : "");
+}
+
 function fmtDist(m){
   if(m == null) return "";
   return m < 1609 ? (Math.round(m*3.28) + " ft") : ((m/1609).toFixed(1) + " mi");
@@ -258,7 +331,7 @@ function render(list){
     /* Age is always shown. A generator marked available six hours ago is a guess, not a fact,
        and in an incident a confident wrong answer is worse than an admittedly uncertain one.
        Past staleMinutes it is called out rather than quietly presented as current. */
-    var ageTxt = (age == null) ? "" : (age < 60 ? (age + "m ago") : (Math.round(age/60) + "h ago"));
+    var ageTxt = humanAge(age, r.updated_at);
     var stale = (age != null && age > CONFIG.staleMinutes);
     var st = statusOf(r.status);
     return '<div class="card" data-i="'+i+'"><div class="row"><div>'+
@@ -273,6 +346,8 @@ function render(list){
       '</div></div>';
   }).join("");
 
+  renderRecent();
+
   rows.forEach(function(r){
     var c = statusOf(r.status).color;
     var d = document.createElement("div");
@@ -286,8 +361,26 @@ function render(list){
     card.onclick = function(){
       var r = rows[+card.dataset.i];
       map.flyTo({ center:[r.lng, r.lat], zoom:15, duration:700 });
+      openStatus(r);
     };
   });
+}
+
+/* Anything touched in the last hour. Deliberately a strip of chips rather than a second list:
+   it is a glance, not a screen. */
+function renderRecent(){
+  var el = document.getElementById("recent");
+  if(!el) return;
+  var fresh = rows.filter(function(r){ return r.minutes_since_update != null && r.minutes_since_update <= 60; })
+                  .sort(function(a,b){ return a.minutes_since_update - b.minutes_since_update; })
+                  .slice(0,6);
+  if(!fresh.length){ el.className = ""; el.innerHTML = ""; return; }
+  el.className = "on";
+  el.innerHTML = '<div class="rhead">Changed in the last hour</div>' +
+    fresh.map(function(r){
+      return '<span class="chip">' + esc(r.name) + ' → ' + esc(statusOf(r.status).label) +
+             '<i>' + esc(humanAge(r.minutes_since_update, r.updated_at)) + '</i></span>';
+    }).join("");
 }
 
 function withAge(list){
@@ -457,12 +550,13 @@ function summarise(question, rows){
       (r.distance_m != null ? (", " + fmtDist(r.distance_m) + " away") : "") +
       (r.capacity ? (", " + r.capacity) : "") +
       (r.contact ? (", contact " + r.contact) : "") +
-      (r.minutes_since_update != null ? (", updated " + r.minutes_since_update + " min ago") : "");
+      (r.minutes_since_update != null ? (", updated " + humanAge(r.minutes_since_update, r.updated_at)) : "");
   }).join("\n");
   var sys = "You are briefing an incident commander. Use ONLY the resource list given. Never " +
     "invent a resource, an agency or a contact. Two sentences maximum. Lead with the single " +
-    "best option and who to call. If anything was updated more than 120 minutes ago, say the " +
-    "status is unverified.";
+    "best option and who to call. If anything was updated more than 2 hours ago, say the " +
+    "status is unverified. Report ages exactly as they are given to you — never convert them " +
+    "into minutes.";
   return askOpenAI([{ role:"system", content:sys },
                     { role:"user", content:"Question: " + question + "\n\nResources:\n" + facts }], 180);
 }
@@ -590,6 +684,64 @@ function toastMsg(msg){
   clearTimeout(_toastT);
   _toastT = setTimeout(function(){ t.className = ""; }, 5200);
 }
+
+/* ── changing a status ──
+   PATCH, not a re-insert: the row keeps its identity and its history, and the updated_at trigger
+   in the schema stamps the time automatically. Optimistic UI — the pill changes immediately and
+   rolls back if the write fails — because on a bad connection a commander should never be left
+   wondering whether the tap registered. */
+var _stCurrent = null;
+
+function openStatus(r){
+  _stCurrent = r;
+  document.getElementById("st_name").textContent = r.name;
+  document.getElementById("st_meta").textContent =
+    r.agency + (r.capacity ? (" · " + r.capacity) : "") +
+    (r.contact ? (" · " + r.contact) : "") +
+    (r.minutes_since_update != null ? (" · updated " + humanAge(r.minutes_since_update, r.updated_at)) : "");
+  Array.prototype.forEach.call(document.querySelectorAll(".stbtn"), function(b){
+    b.classList.toggle("current", b.dataset.s === r.status);
+  });
+  document.getElementById("st_note").textContent =
+    "Updating stamps the time, so everyone else can see how fresh this is.";
+  document.getElementById("status").classList.add("on");
+}
+
+function closeStatus(){
+  document.getElementById("status").classList.remove("on");
+  _stCurrent = null;
+}
+document.getElementById("st_close").onclick = closeStatus;
+document.getElementById("status").onclick = function(e){
+  if(e.target.id === "status") closeStatus();      // tap the backdrop
+};
+
+Array.prototype.forEach.call(document.querySelectorAll(".stbtn"), function(btn){
+  btn.onclick = function(){
+    if(!_stCurrent) return;
+    var r = _stCurrent, next = btn.dataset.s, prev = r.status;
+    if(next === prev){ closeStatus(); return; }
+
+    // optimistic: reflect it now, reconcile after
+    r.status = next;
+    r.minutes_since_update = 0;
+    r.updated_at = new Date().toISOString();
+    render(rows);
+    closeStatus();
+    toastMsg(r.name + " → " + statusOf(next).label);
+
+    api("resources?id=eq." + encodeURIComponent(r.id), {
+      method:"PATCH",
+      headers:{ "Prefer":"return=minimal" },
+      body: JSON.stringify({ status: next })
+    }).catch(function(e){
+      r.status = prev;                              // roll back, and say so
+      render(rows);
+      toastMsg("Couldn't save that change — status put back to " + statusOf(prev).label +
+               ". " + ((e && e.message) || ""));
+    });
+  };
+});
 
 document.getElementById("addBtn").onclick = function(){
   document.getElementById("add").classList.add("on");
