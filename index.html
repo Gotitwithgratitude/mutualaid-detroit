@@ -75,6 +75,13 @@
     color:var(--text);border-radius:9px;padding:10px;font-size:15px;font-family:inherit}
   .two{display:flex;gap:10px}.two .fld{flex:1}
   .hint{font-size:12px;color:var(--mute);margin:-2px 0 12px;line-height:1.45}
+  #toast{position:fixed;left:50%;bottom:calc(18px + env(safe-area-inset-bottom,0px));
+    transform:translate(-50%,120%);z-index:20;max-width:min(560px,92vw);
+    background:#1A1E24;border:1px solid var(--line);border-left:3px solid var(--pending);
+    color:var(--text);border-radius:11px;padding:11px 14px;font-size:13.5px;line-height:1.45;
+    box-shadow:0 10px 34px rgba(0,0,0,.55);transition:transform .26s cubic-bezier(.32,.72,0,1);
+    pointer-events:none}
+  #toast.on{transform:translate(-50%,0)}
 </style>
 </head>
 <body>
@@ -89,7 +96,7 @@
 <div id="sheet">
   <div class="grip"></div>
   <div class="bar">
-    <input id="q" placeholder="Incident address or intersection" />
+    <input id="q" placeholder="Address, or long-press the map" />
     <select id="kind">
       <option value="">All types</option>
       <option value="pump">Pumps</option>
@@ -299,20 +306,93 @@ function showError(e){
     : '<div class="empty">Could not reach the registry. '+esc(e && e.message)+'</div>';
 }
 
-/* Geocoding via Nominatim — free, no key. Their usage policy asks for low volume and a real
-   referrer; both hold here. Biased to Detroit so "Jefferson and Chene" resolves locally. */
-document.getElementById("go").onclick = function(){
+/* ── Locating the incident ──
+   Geocoding is the one part of this that depends on a service I do not control, and it is the
+   part a demo runs on. So it degrades instead of failing:
+     1. "lat,lng" typed directly — no network at all, always works
+     2. Nominatim, tried in several phrasings, because it handles addresses well and
+        intersections badly ("Jefferson and Chene" fails; "Jefferson & Chene" and
+        "Jefferson St & Chene St" often succeed)
+     3. If all of that fails, search from wherever the map is centred and say so
+   The fallback matters more than the geocoder: an incident commander pointing at a spot on a
+   map is a completely reasonable way to ask "what is near HERE", and it cannot break. */
+function parseLatLng(s){
+  var m = s.match(/^\s*(-?\d{1,2}\.\d+)\s*,\s*(-?\d{1,3}\.\d+)\s*$/);
+  return m ? { lat:parseFloat(m[1]), lng:parseFloat(m[2]) } : null;
+}
+
+function geocodeVariants(q){
+  /* Nominatim reads "and" as a word, not as an intersection operator. "&" it understands, and
+     adding street suffixes helps it disambiguate. Tried in order, first hit wins. */
+  var v = [];
+  var amp = q.replace(/\s+and\s+/i, " & ");
+  v.push(amp + ", Detroit, MI");
+  if(/&/.test(amp)){
+    var parts = amp.split("&").map(function(x){ return x.trim(); });
+    if(parts.length === 2){
+      v.push(parts[0] + " Street & " + parts[1] + " Street, Detroit, MI");
+      v.push(parts[0] + " Ave & " + parts[1] + " St, Detroit, MI");
+      v.push(parts[0] + ", Detroit, MI");     // fall back to the first street alone
+    }
+  }
+  if(v.indexOf(q + ", Detroit, MI") === -1) v.push(q + ", Detroit, MI");
+  return v;
+}
+
+function tryGeocode(list, i){
+  if(i >= list.length) return Promise.resolve(null);
+  return fetch("https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=us&q="+
+               encodeURIComponent(list[i]))
+    .then(function(r){ return r.ok ? r.json() : []; })
+    .then(function(d){
+      if(d && d.length) return { lat:parseFloat(d[0].lat), lng:parseFloat(d[0].lon), used:list[i] };
+      return tryGeocode(list, i+1);
+    })
+    .catch(function(){ return tryGeocode(list, i+1); });
+}
+
+function runSearch(){
   var q = document.getElementById("q").value.trim();
   if(!q){ loadAll(); return; }
-  fetch("https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=us&q="+
-        encodeURIComponent(q + ", Detroit, MI"))
-    .then(function(r){ return r.json(); })
-    .then(function(d){
-      if(!d || !d.length){ alert("Couldn't find that address."); return; }
-      searchNear(parseFloat(d[0].lat), parseFloat(d[0].lon));
-    })
-    .catch(function(){ alert("Address lookup failed."); });
-};
+
+  var direct = parseLatLng(q);
+  if(direct){ searchNear(direct.lat, direct.lng); return; }
+
+  var btn = document.getElementById("go"), label = btn.textContent;
+  btn.textContent = "…"; btn.disabled = true;
+  tryGeocode(geocodeVariants(q), 0).then(function(hit){
+    btn.textContent = label; btn.disabled = false;
+    if(hit){ searchNear(hit.lat, hit.lng); return; }
+    /* Nothing matched. Rather than a dead end, use the map — and say plainly that is what
+       happened, so nobody thinks the address was found when it wasn't. */
+    var c = map.getCenter();
+    searchNear(c.lat, c.lng);
+    toastMsg("Couldn't place that address — showing what's near the centre of the map instead. "+
+             "Move the map and search again, or type coordinates as lat,lng.");
+  });
+}
+
+document.getElementById("go").onclick = runSearch;
+document.getElementById("q").addEventListener("keydown", function(e){
+  if(e.key === "Enter") runSearch();
+});
+
+/* A second, network-free way to ask the same question: long-press or right-click the map to
+   treat that point as the incident. This is the one that cannot fail in a demo. */
+map.on("contextmenu", function(e){ searchNear(e.lngLat.lat, e.lngLat.lng); });
+
+var _toastT = null;
+function toastMsg(msg){
+  var t = document.getElementById("toast");
+  if(!t){
+    t = document.createElement("div"); t.id = "toast";
+    document.body.appendChild(t);
+  }
+  t.textContent = msg;
+  t.className = "on";
+  clearTimeout(_toastT);
+  _toastT = setTimeout(function(){ t.className = ""; }, 5200);
+}
 document.getElementById("kind").onchange = loadAll;
 
 document.getElementById("addBtn").onclick = function(){
