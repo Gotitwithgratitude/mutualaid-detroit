@@ -5,90 +5,347 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>MutualAid Detroit — cross-agency resource visibility</title>
 <meta name="description" content="A shared resource registry for Detroit emergency response. See what every agency has, and where, during an incident." />
+<link href="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/5.3.0/maplibre-gl.min.css" rel="stylesheet" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/5.3.0/maplibre-gl.min.js"></script>
 <style>
   :root{
-    --bg:#0B0D10; --panel:#14171C; --line:rgba(235,235,245,.13);
+    --bg:#0B0D10; --panel:#14171C; --panel2:#1A1E24; --line:rgba(235,235,245,.13);
     --text:#EDEFF2; --mute:#98A1AE;
     --alert:#E5484D; --ready:#3FBF7F; --pending:#E8B339;
     --tech:ui-monospace,SFMono-Regular,Menlo,monospace;
   }
   *{box-sizing:border-box}
+  html,body{height:100%}
   body{margin:0;background:var(--bg);color:var(--text);
     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
-    line-height:1.55;-webkit-text-size-adjust:100%}
-  header{padding:calc(22px + env(safe-area-inset-top,0px)) 22px 20px;
-    border-bottom:1px solid var(--line)}
-  .mark{font-size:21px;font-weight:800;letter-spacing:.3px}
+    line-height:1.5;-webkit-text-size-adjust:100%;overflow:hidden}
+
+  header{position:absolute;top:0;left:0;right:0;z-index:5;
+    padding:calc(12px + env(safe-area-inset-top,0px)) 16px 12px;
+    background:linear-gradient(180deg,rgba(11,13,16,.96),rgba(11,13,16,.72) 70%,transparent);
+    display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .mark{font-size:17px;font-weight:800;letter-spacing:.2px;white-space:nowrap}
   .mark b{color:var(--alert)}
-  .tag{font-family:var(--tech);font-size:10.5px;letter-spacing:1.4px;text-transform:uppercase;
-    color:var(--mute);margin-top:6px}
-  main{max-width:820px;margin:0 auto;padding:24px 22px 80px}
-  h2{font-family:var(--tech);font-size:11px;letter-spacing:1.5px;text-transform:uppercase;
-    color:var(--mute);margin:30px 0 10px}
-  .lede{font-size:19px;line-height:1.45;margin:6px 0 0}
-  .q{border-left:3px solid var(--alert);padding:12px 0 12px 16px;margin:20px 0;color:var(--mute)}
-  .grid{display:grid;gap:10px;margin-top:10px}
-  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
-  .card .r{display:flex;align-items:center;gap:10px;justify-content:space-between}
-  .name{font-weight:700}
-  .meta{font-family:var(--tech);font-size:11px;color:var(--mute);margin-top:3px}
-  .pill{font-family:var(--tech);font-size:10px;letter-spacing:1px;text-transform:uppercase;
-    padding:4px 9px;border-radius:999px;white-space:nowrap}
-  .ready{background:rgba(63,191,127,.14);color:var(--ready)}
-  .out{background:rgba(229,72,77,.14);color:var(--alert)}
-  .soon{background:rgba(232,179,57,.14);color:var(--pending)}
-  footer{color:var(--mute);font-size:12.5px;border-top:1px solid var(--line);
-    margin-top:40px;padding-top:16px}
+  .demo{font-family:var(--tech);font-size:9.5px;letter-spacing:1.1px;text-transform:uppercase;
+    color:var(--pending);border:1px solid rgba(232,179,57,.4);border-radius:999px;padding:3px 8px}
+
+  #map{position:absolute;inset:0}
+
+  #sheet{position:absolute;left:0;right:0;bottom:0;z-index:6;max-height:64%;
+    background:var(--panel);border-top:1px solid var(--line);
+    border-radius:18px 18px 0 0;display:flex;flex-direction:column;
+    box-shadow:0 -14px 40px rgba(0,0,0,.5);
+    padding-bottom:env(safe-area-inset-bottom,0px)}
+  .grip{width:38px;height:4px;border-radius:3px;background:rgba(235,235,245,.22);
+    margin:9px auto 4px;flex:0 0 auto}
+  .bar{display:flex;gap:8px;align-items:center;padding:6px 14px 10px;flex-wrap:wrap;flex:0 0 auto}
+  .bar input,.bar select{background:var(--panel2);border:1px solid var(--line);color:var(--text);
+    border-radius:9px;padding:9px 10px;font-size:14px;font-family:inherit}
+  .bar input{flex:1;min-width:120px}
+  .btn{background:var(--alert);color:#fff;border:none;border-radius:9px;padding:9px 14px;
+    font-size:14px;font-weight:700;cursor:pointer;white-space:nowrap}
+  .btn.ghost{background:var(--panel2);color:var(--text);border:1px solid var(--line);font-weight:600}
+  #list{overflow-y:auto;padding:0 14px 16px;-webkit-overflow-scrolling:touch}
+  .card{background:var(--panel2);border:1px solid var(--line);border-radius:11px;
+    padding:11px 13px;margin-bottom:8px;cursor:pointer}
+  .card:active{border-color:var(--alert)}
+  .row{display:flex;gap:10px;align-items:flex-start;justify-content:space-between}
+  .name{font-weight:700;font-size:14.5px}
+  .meta{font-family:var(--tech);font-size:11px;color:var(--mute);margin-top:3px;line-height:1.45}
+  .pill{font-family:var(--tech);font-size:9.5px;letter-spacing:.9px;text-transform:uppercase;
+    padding:4px 8px;border-radius:999px;white-space:nowrap;flex:0 0 auto}
+  .available{background:rgba(63,191,127,.15);color:var(--ready)}
+  .committed{background:rgba(229,72,77,.15);color:var(--alert)}
+  .en_route{background:rgba(232,179,57,.15);color:var(--pending)}
+  .out_of_service{background:rgba(152,161,174,.15);color:var(--mute)}
+  .stale{color:var(--pending)}
+  .empty{color:var(--mute);font-size:14px;padding:14px 2px}
+
+  #add{position:absolute;inset:0;z-index:9;background:rgba(6,8,10,.86);display:none;
+    align-items:flex-end}
+  #add.on{display:flex}
+  .modal{width:100%;background:var(--panel);border-radius:18px 18px 0 0;
+    border-top:1px solid var(--line);padding:16px 16px calc(20px + env(safe-area-inset-bottom,0px));
+    max-height:88%;overflow-y:auto}
+  .modal h3{margin:4px 0 10px;font-size:16px}
+  .fld{margin-bottom:10px}
+  .fld label{display:block;font-family:var(--tech);font-size:10px;letter-spacing:1.1px;
+    text-transform:uppercase;color:var(--mute);margin-bottom:4px}
+  .fld input,.fld select{width:100%;background:var(--panel2);border:1px solid var(--line);
+    color:var(--text);border-radius:9px;padding:10px;font-size:15px;font-family:inherit}
+  .two{display:flex;gap:10px}.two .fld{flex:1}
+  .hint{font-size:12px;color:var(--mute);margin:-2px 0 12px;line-height:1.45}
 </style>
 </head>
 <body>
+
+<div id="map"></div>
+
 <header>
-  <div class="mark">Mutual<b>Aid</b> Detroit</div>
-  <div class="tag">Cross-agency resource visibility · Venture 313 Buildathon</div>
+  <span class="mark">Mutual<b>Aid</b> Detroit</span>
+  <span class="demo">Demonstration data</span>
 </header>
 
-<main>
-  <p class="lede">When an emergency crosses agency lines, nobody can see what the other
-  agencies have.</p>
-
-  <div class="q">
-    Five agencies can share a building and still not share a view of their resources. During a
-    flood or a multi-alarm fire, communication is the first thing to fail — and the question
-    nobody can answer quickly is the simplest one: <strong>who has what, and where is it now?</strong>
+<div id="sheet">
+  <div class="grip"></div>
+  <div class="bar">
+    <input id="q" placeholder="Incident address or intersection" />
+    <select id="kind">
+      <option value="">All types</option>
+      <option value="pump">Pumps</option>
+      <option value="generator">Generators</option>
+      <option value="light">Lighting</option>
+      <option value="vehicle">Vehicles</option>
+      <option value="shelter">Shelter</option>
+      <option value="crew">Crews</option>
+    </select>
+    <button class="btn" id="go">Search</button>
+    <button class="btn ghost" id="addBtn">+ Add</button>
   </div>
+  <div id="list"><div class="empty">Loading resources…</div></div>
+</div>
 
-  <h2>What this is</h2>
-  <p>A shared registry of response resources — vehicles, generators, pumps, crews, shelter
-  capacity — posted by the agencies that own them, placed on a map, and exposed to an AI
-  assistant so dispatch can ask for what they need in plain language instead of working a
-  phone tree.</p>
-
-  <h2>Resources near an incident — sample</h2>
-  <div class="grid" id="list"></div>
-
-  <footer>
-    Day 1 build · started Sept 17, 2026 · built solo<br>
-    Sample data shown for demonstration. Not connected to live agency systems.
-  </footer>
-</main>
+<div id="add">
+  <div class="modal">
+    <h3>Add a resource</h3>
+    <p class="hint">Posted to the shared registry. Anyone responding to an incident nearby
+    will see it.</p>
+    <div class="fld"><label>Agency</label><input id="f_agency" placeholder="DFD Engine 30" /></div>
+    <div class="fld"><label>Resource</label><input id="f_name" placeholder="Portable pump, 4in" /></div>
+    <div class="two">
+      <div class="fld"><label>Type</label>
+        <select id="f_kind">
+          <option value="pump">Pump</option><option value="generator">Generator</option>
+          <option value="light">Lighting</option><option value="vehicle">Vehicle</option>
+          <option value="shelter">Shelter</option><option value="crew">Crew</option>
+        </select>
+      </div>
+      <div class="fld"><label>Status</label>
+        <select id="f_status">
+          <option value="available">Available</option><option value="en_route">En route</option>
+          <option value="committed">Committed</option><option value="out_of_service">Out of service</option>
+        </select>
+      </div>
+    </div>
+    <div class="two">
+      <div class="fld"><label>Capacity</label><input id="f_capacity" placeholder="1500 gpm" /></div>
+      <div class="fld"><label>Contact</label><input id="f_contact" placeholder="Dispatch" /></div>
+    </div>
+    <p class="hint">Location is taken from the centre of the map — move the map to place it.</p>
+    <div class="two">
+      <button class="btn ghost" id="cancelAdd" style="flex:1">Cancel</button>
+      <button class="btn" id="saveAdd" style="flex:1">Post resource</button>
+    </div>
+  </div>
+</div>
 
 <script>
-/* Day 1: static sample so the shape of the thing is visible and testable before the database
-   is wired up. Replaced by a live Supabase query next. */
-var SAMPLE = [
-  {name:"Portable pump, 4in",   agency:"DFD Engine 30",       dist:"0.8 mi", status:"ready", contact:"Dispatch 313-xxx"},
-  {name:"Light tower, towable", agency:"DPW Yard 3",          dist:"1.2 mi", status:"ready", contact:"Yard supervisor"},
-  {name:"Generator, 45kW",      agency:"DTE staging",         dist:"1.9 mi", status:"soon",  contact:"Storm desk"},
-  {name:"High-water vehicle",   agency:"DFD Special Ops",     dist:"2.3 mi", status:"out",   contact:"Special Ops"},
-  {name:"Warming shelter, 60",  agency:"Rec Center — Butzel", dist:"2.6 mi", status:"ready", contact:"Site lead"}
-];
-var LABEL = {ready:"Available", soon:"En route", out:"Committed"};
-document.getElementById("list").innerHTML = SAMPLE.map(function(r){
-  return '<div class="card"><div class="r"><div>'+
-         '<div class="name">'+r.name+'</div>'+
-         '<div class="meta">'+r.agency+' · '+r.dist+' · '+r.contact+'</div>'+
-         '</div><span class="pill '+r.status+'">'+LABEL[r.status]+'</span></div></div>';
-}).join("");
+/* ═══════════ MutualAid Detroit ═══════════
+   CONFIG is the single source of truth. Every value the app needs is read from here and
+   nowhere else — no second copy of a URL, a colour, or a status list anywhere in this file.
+   Config that exists in two places drifts apart, and the resulting bug always looks like
+   something else. Cheaper to never make the second copy. */
+var CONFIG = {
+  supabaseUrl: "https://uthusjzbffpvckemfscc.supabase.co",
+  /* The ANON public key. It is meant to be here — Supabase designs it to be visible in browser
+     code, and the row level security policies in setup.sql are what actually protect the data.
+     NEVER put the service_role or sb_secret key here: those bypass RLS entirely. */
+  supabaseKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV0aHVzanpiZmZwdmNrZW1mc2NjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk2OTA0NDQsImV4cCI6MjEwNTI2NjQ0NH0.MJEjL8lfJLFa89nCmNF4kM70Vxv__xVQaZvnjIkcxAM",
+  center: [-83.0458, 42.3314],
+  zoom: 11.4,
+  radiusM: 8000,
+  staleMinutes: 120  // past this, a status is shown as unverified rather than current
+};
+
+/* Status labels and colours, defined once, keyed to the exact values the database CHECK
+   constraint allows. Adding a status means schema.sql and this object — nowhere else. */
+var STATUS = {
+  available:      { label:"Available",      color:"#3FBF7F" },
+  en_route:       { label:"En route",       color:"#E8B339" },
+  committed:      { label:"Committed",      color:"#E5484D" },
+  out_of_service: { label:"Out of service", color:"#98A1AE" }
+};
+
+var map, markers = [], rows = [], incidentMarker = null;
+
+map = new maplibregl.Map({
+  container:"map",
+  style:{
+    version:8,
+    sources:{ osm:{ type:"raster",
+      tiles:["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+      tileSize:256, attribution:"© OpenStreetMap contributors" } },
+    layers:[
+      { id:"bg", type:"background", paint:{ "background-color":"#0B0D10" } },
+      /* Dark, desaturated basemap on purpose: the map is context, the resources are the
+         content. A bright basemap competes with the markers, which is backwards for something
+         read under stress. */
+      { id:"osm", type:"raster", source:"osm",
+        paint:{ "raster-brightness-max":0.42, "raster-saturation":-0.25, "raster-contrast":0.15 } }
+    ]
+  },
+  center:CONFIG.center, zoom:CONFIG.zoom
+});
+
+function api(path, opts){
+  if(!CONFIG.supabaseUrl || !CONFIG.supabaseKey) return Promise.reject(new Error("no-config"));
+  opts = opts || {};
+  opts.headers = Object.assign({
+    "apikey": CONFIG.supabaseKey,
+    "Authorization": "Bearer " + CONFIG.supabaseKey,
+    "Content-Type": "application/json"
+  }, opts.headers || {});
+  return fetch(CONFIG.supabaseUrl + "/rest/v1/" + path, opts).then(function(r){
+    if(!r.ok) return r.text().then(function(t){ throw new Error(t || ("HTTP " + r.status)); });
+    return r.status === 204 ? null : r.json();
+  });
+}
+
+function esc(s){ return String(s == null ? "" : s).replace(/[<>&"]/g, function(c){
+  return { "<":"&lt;", ">":"&gt;", "&":"&amp;", '"':"&quot;" }[c]; }); }
+
+function statusOf(k){ return STATUS[k] || { label:k, color:"#98A1AE" }; }
+
+function clearMarkers(){ markers.forEach(function(m){ m.remove(); }); markers = []; }
+
+function fmtDist(m){
+  if(m == null) return "";
+  return m < 1609 ? (Math.round(m*3.28) + " ft") : ((m/1609).toFixed(1) + " mi");
+}
+
+function render(list){
+  rows = list || [];
+  var el = document.getElementById("list");
+  clearMarkers();
+
+  if(!rows.length){
+    el.innerHTML = '<div class="empty">No resources match. Widen the filter, or add one.</div>';
+    return;
+  }
+
+  el.innerHTML = rows.map(function(r,i){
+    var age = (r.minutes_since_update != null) ? r.minutes_since_update : null;
+    /* Age is always shown. A generator marked available six hours ago is a guess, not a fact,
+       and in an incident a confident wrong answer is worse than an admittedly uncertain one.
+       Past staleMinutes it is called out rather than quietly presented as current. */
+    var ageTxt = (age == null) ? "" : (age < 60 ? (age + "m ago") : (Math.round(age/60) + "h ago"));
+    var stale = (age != null && age > CONFIG.staleMinutes);
+    var st = statusOf(r.status);
+    return '<div class="card" data-i="'+i+'"><div class="row"><div>'+
+      '<div class="name">'+esc(r.name)+'</div>'+
+      '<div class="meta">'+esc(r.agency)+
+        (r.distance_m != null ? (" · "+fmtDist(r.distance_m)) : "")+
+        (r.capacity ? (" · "+esc(r.capacity)) : "")+'<br>'+
+        (r.contact ? esc(r.contact) : "no contact listed")+
+        (ageTxt ? (' · <span class="'+(stale?"stale":"")+'">'+ageTxt+(stale?" — unverified":"")+'</span>') : "")+
+      '</div></div>'+
+      '<span class="pill '+esc(r.status)+'">'+esc(st.label)+'</span>'+
+      '</div></div>';
+  }).join("");
+
+  rows.forEach(function(r){
+    var c = statusOf(r.status).color;
+    var d = document.createElement("div");
+    d.style.cssText = "width:14px;height:14px;border-radius:50%;border:2px solid #0B0D10;"+
+      "background:"+c+";box-shadow:0 0 0 3px "+c+"33";
+    markers.push(new maplibregl.Marker({ element:d, anchor:"center" })
+      .setLngLat([r.lng, r.lat]).addTo(map));
+  });
+
+  Array.prototype.forEach.call(el.querySelectorAll(".card"), function(card){
+    card.onclick = function(){
+      var r = rows[+card.dataset.i];
+      map.flyTo({ center:[r.lng, r.lat], zoom:15, duration:700 });
+    };
+  });
+}
+
+function withAge(list){
+  return (list||[]).map(function(r){
+    if(r.minutes_since_update == null && r.updated_at){
+      r.minutes_since_update = Math.round((Date.now() - new Date(r.updated_at).getTime())/60000);
+    }
+    return r;
+  });
+}
+
+function loadAll(){
+  var kind = document.getElementById("kind").value;
+  api("resources?select=*&order=updated_at.desc" + (kind ? ("&kind=eq."+kind) : ""))
+    .then(function(d){ render(withAge(d)); })
+    .catch(showError);
+}
+
+function searchNear(lat, lng){
+  var kind = document.getElementById("kind").value;
+  api("rpc/resources_near", { method:"POST", body:JSON.stringify({
+      in_lat:lat, in_lng:lng, radius_m:CONFIG.radiusM, only_available:false }) })
+    .then(function(d){
+      d = withAge(d);
+      if(kind) d = d.filter(function(r){ return r.kind === kind; });
+      render(d);
+      if(incidentMarker) incidentMarker.remove();
+      incidentMarker = new maplibregl.Marker({ color:"#E5484D" })
+        .setLngLat([lng, lat]).addTo(map);
+      map.flyTo({ center:[lng, lat], zoom:13, duration:700 });
+    })
+    .catch(showError);
+}
+
+function showError(e){
+  var el = document.getElementById("list");
+  el.innerHTML = (e && e.message === "no-config")
+    ? '<div class="empty">Not connected yet — paste your Supabase URL and anon key into CONFIG at the top of index.html.</div>'
+    : '<div class="empty">Could not reach the registry. '+esc(e && e.message)+'</div>';
+}
+
+/* Geocoding via Nominatim — free, no key. Their usage policy asks for low volume and a real
+   referrer; both hold here. Biased to Detroit so "Jefferson and Chene" resolves locally. */
+document.getElementById("go").onclick = function(){
+  var q = document.getElementById("q").value.trim();
+  if(!q){ loadAll(); return; }
+  fetch("https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=us&q="+
+        encodeURIComponent(q + ", Detroit, MI"))
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if(!d || !d.length){ alert("Couldn't find that address."); return; }
+      searchNear(parseFloat(d[0].lat), parseFloat(d[0].lon));
+    })
+    .catch(function(){ alert("Address lookup failed."); });
+};
+document.getElementById("kind").onchange = loadAll;
+
+document.getElementById("addBtn").onclick = function(){
+  document.getElementById("add").classList.add("on");
+};
+document.getElementById("cancelAdd").onclick = function(){
+  document.getElementById("add").classList.remove("on");
+};
+document.getElementById("saveAdd").onclick = function(){
+  var c = map.getCenter();
+  var body = {
+    agency:   document.getElementById("f_agency").value.trim(),
+    name:     document.getElementById("f_name").value.trim(),
+    kind:     document.getElementById("f_kind").value,
+    status:   document.getElementById("f_status").value,
+    capacity: document.getElementById("f_capacity").value.trim() || null,
+    contact:  document.getElementById("f_contact").value.trim() || null,
+    lat: c.lat, lng: c.lng
+  };
+  if(!body.agency || !body.name){ alert("Agency and resource name are required."); return; }
+  api("resources", { method:"POST", body:JSON.stringify(body),
+      headers:{ "Prefer":"return=minimal" } })
+    .then(function(){
+      document.getElementById("add").classList.remove("on");
+      ["f_agency","f_name","f_capacity","f_contact"].forEach(function(id){
+        document.getElementById(id).value = "";
+      });
+      loadAll();
+    })
+    .catch(function(e){ alert("Could not post: " + (e && e.message)); });
+};
+
+map.on("load", loadAll);
 </script>
 </body>
 </html>
