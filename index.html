@@ -44,7 +44,8 @@
   .bar input{flex:1;min-width:120px}
   .btn{background:var(--alert);color:#fff;border:none;border-radius:9px;padding:9px 14px;
     font-size:14px;font-weight:700;cursor:pointer;white-space:nowrap}
-  .btn.ghost{background:var(--panel2);color:var(--text);border:1px solid var(--line);font-weight:600}
+  .btn.ghost{background:var(--panel2);color:var(--text);border:1px solid var(--line);
+    font-weight:600;min-width:44px;font-size:18px;line-height:1;padding:9px 12px}
   #list{overflow-y:auto;padding:0 14px 16px;-webkit-overflow-scrolling:touch}
   .card{background:var(--panel2);border:1px solid var(--line);border-radius:11px;
     padding:11px 13px;margin-bottom:8px;cursor:pointer}
@@ -75,6 +76,21 @@
     color:var(--text);border-radius:9px;padding:10px;font-size:15px;font-family:inherit}
   .two{display:flex;gap:10px}.two .fld{flex:1}
   .hint{font-size:12px;color:var(--mute);margin:-2px 0 12px;line-height:1.45}
+  #coords{margin-left:auto;font-family:var(--tech);font-size:10.5px;color:var(--mute);
+    border:1px solid var(--line);border-radius:999px;padding:3px 9px;cursor:pointer;
+    white-space:nowrap}
+  #coords:active{color:var(--text);border-color:var(--ready)}
+  #aiBtn{font-family:var(--tech);font-size:10.5px;letter-spacing:1.1px;cursor:pointer;
+    border-radius:999px;padding:4px 10px;background:transparent;color:var(--mute);
+    border:1px solid var(--line)}
+  #aiBtn.on{color:#C4B5FD;border-color:#6E56CF;background:rgba(110,86,207,.14)}
+  .btn.ask{background:#6E56CF}
+  #answer{padding:0 14px;color:var(--text);font-size:14px;line-height:1.55}
+  #answer .box{background:rgba(110,86,207,.10);border:1px solid rgba(110,86,207,.35);
+    border-left:3px solid #6E56CF;border-radius:11px;padding:11px 13px;margin-bottom:10px}
+  #answer .box b{color:#C4B5FD}
+  #answer .why{display:block;margin-top:7px;font-family:var(--tech);font-size:10.5px;
+    color:var(--mute);letter-spacing:.3px}
   #toast{position:fixed;left:50%;bottom:calc(18px + env(safe-area-inset-bottom,0px));
     transform:translate(-50%,120%);z-index:20;max-width:min(560px,92vw);
     background:#1A1E24;border:1px solid var(--line);border-left:3px solid var(--pending);
@@ -91,24 +107,22 @@
 <header>
   <span class="mark">Mutual<b>Aid</b> Detroit</span>
   <span class="demo">Demonstration data</span>
+  <span id="coords" title="Tap to copy">—</span>
+  <button id="aiBtn" title="Plain-language questions">AI</button>
 </header>
 
 <div id="sheet">
   <div class="grip"></div>
+  <!-- One box. Typing a question, an address, or coordinates all go through the same control,
+       because from the user's side those are the same act: "tell me what's near this". Two
+       separate inputs made the user decide which kind of thing they were about to type before
+       they had typed it. -->
   <div class="bar">
-    <input id="q" placeholder="Address, or long-press the map" />
-    <select id="kind">
-      <option value="">All types</option>
-      <option value="pump">Pumps</option>
-      <option value="generator">Generators</option>
-      <option value="light">Lighting</option>
-      <option value="vehicle">Vehicles</option>
-      <option value="shelter">Shelter</option>
-      <option value="crew">Crews</option>
-    </select>
-    <button class="btn" id="go">Search</button>
-    <button class="btn ghost" id="addBtn">+ Add</button>
+    <input id="q" placeholder="What do you need, and where?" />
+    <button class="btn" id="go">Find</button>
+    <button class="btn ghost" id="addBtn">+</button>
   </div>
+  <div id="answer"></div>
   <div id="list"><div class="empty">Loading resources…</div></div>
 </div>
 
@@ -158,6 +172,15 @@ var CONFIG = {
      code, and the row level security policies in setup.sql are what actually protect the data.
      NEVER put the service_role or sb_secret key here: those bypass RLS entirely. */
   supabaseKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV0aHVzanpiZmZwdmNrZW1mc2NjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk2OTA0NDQsImV4cCI6MjEwNTI2NjQ0NH0.MJEjL8lfJLFa89nCmNF4kM70Vxv__xVQaZvnjIkcxAM",
+  /* ═══════════ NO API KEY LIVES IN THIS FILE ═══════════
+     The repository is public. An OpenAI key committed to a public repo is scraped by bots —
+     often within hours — and billed to the owner's card. So the key is never in the source:
+     the app asks for it once and keeps it in this browser's localStorage, on this device only.
+     That is still not how a production system works — there the model call sits behind a server
+     function and the key never reaches a browser at all. But it is honest for a five-day build,
+     it keeps a real credential out of a public repo, and anyone cloning this repo supplies
+     their own key rather than spending mine. */
+  openaiKey: (function(){ try{ return localStorage.getItem("ma_openai_key") || ""; }catch(e){ return ""; } })(),
   center: [-83.0458, 42.3314],
   zoom: 11.4,
   radiusM: 8000,
@@ -277,19 +300,18 @@ function withAge(list){
 }
 
 function loadAll(){
-  var kind = document.getElementById("kind").value;
+  var kind = "";
   api("resources?select=*&order=updated_at.desc" + (kind ? ("&kind=eq."+kind) : ""))
     .then(function(d){ render(withAge(d)); })
     .catch(showError);
 }
 
-function searchNear(lat, lng){
-  var kind = document.getElementById("kind").value;
+function searchNear(lat, lng, kinds){
   api("rpc/resources_near", { method:"POST", body:JSON.stringify({
       in_lat:lat, in_lng:lng, radius_m:CONFIG.radiusM, only_available:false }) })
     .then(function(d){
       d = withAge(d);
-      if(kind) d = d.filter(function(r){ return r.kind === kind; });
+      if(kinds && kinds.length) d = d.filter(function(r){ return kinds.indexOf(r.kind) > -1; });
       render(d);
       if(incidentMarker) incidentMarker.remove();
       incidentMarker = new maplibregl.Marker({ color:"#E5484D" })
@@ -351,35 +373,210 @@ function tryGeocode(list, i){
     .catch(function(){ return tryGeocode(list, i+1); });
 }
 
-function runSearch(){
-  var q = document.getElementById("q").value.trim();
-  if(!q){ loadAll(); return; }
-
-  var direct = parseLatLng(q);
-  if(direct){ searchNear(direct.lat, direct.lng); return; }
-
-  var btn = document.getElementById("go"), label = btn.textContent;
-  btn.textContent = "…"; btn.disabled = true;
-  tryGeocode(geocodeVariants(q), 0).then(function(hit){
-    btn.textContent = label; btn.disabled = false;
-    if(hit){ searchNear(hit.lat, hit.lng); return; }
-    /* Nothing matched. Rather than a dead end, use the map — and say plainly that is what
-       happened, so nobody thinks the address was found when it wasn't. */
-    var c = map.getCenter();
-    searchNear(c.lat, c.lng);
-    toastMsg("Couldn't place that address — showing what's near the centre of the map instead. "+
-             "Move the map and search again, or type coordinates as lat,lng.");
-  });
-}
-
-document.getElementById("go").onclick = runSearch;
-document.getElementById("q").addEventListener("keydown", function(e){
-  if(e.key === "Enter") runSearch();
-});
 
 /* A second, network-free way to ask the same question: long-press or right-click the map to
    treat that point as the incident. This is the one that cannot fail in a demo. */
 map.on("contextmenu", function(e){ searchNear(e.lngLat.lat, e.lngLat.lng); });
+
+/* ═══════════ COORDINATES, ALWAYS VISIBLE ═══════════
+   The map centre in lat,lng, live, tappable to copy. Two reasons it earns its place: it makes
+   the coordinate search path discoverable (you can see the format rather than being told it),
+   and in an incident "where exactly" is a question people answer out loud over a radio. */
+function fmtCoord(c){ return c.lat.toFixed(4) + "," + c.lng.toFixed(4); }
+function updateCoords(){
+  var el = document.getElementById("coords");
+  if(el) el.textContent = fmtCoord(map.getCenter());
+}
+map.on("move", updateCoords);
+map.on("load", updateCoords);
+document.getElementById("coords").onclick = function(){
+  var txt = fmtCoord(map.getCenter());
+  try{
+    navigator.clipboard.writeText(txt);
+    toastMsg("Copied " + txt + " — paste it into the search box, or read it over the radio.");
+  }catch(e){ toastMsg(txt); }
+};
+
+/* Long-press / right-click already sets the incident. Show the coordinate too, so the pin and
+   the number always agree. */
+map.on("contextmenu", function(e){ toastMsg("Incident set at " + fmtCoord(e.lngLat)); });
+
+/* ═══════════ ASK — PLAIN LANGUAGE OVER THE REGISTRY ═══════════
+   The honest description of what this does: it uses a language model to turn a sentence into a
+   STRUCTURED QUERY, runs that query against Postgres, and then writes one sentence about the
+   rows that came back. The model never invents a resource — every item shown came out of the
+   database. That distinction is the whole reason this is trustworthy enough to put in front of
+   someone making dispatch decisions, and it is worth saying out loud in the pitch: the AI
+   chooses what to look for, the database decides what exists.
+   Two calls, deliberately:
+     1. sentence → {kind, status, location, radius}
+     2. rows → one plain sentence
+   A single call that did both would let the model answer from memory instead of from data. */
+var ASK_MODEL = "gpt-4o-mini";
+
+function askOpenAI(messages, maxTokens){
+  if(!CONFIG.openaiKey) return Promise.reject(new Error("no-key"));
+  return fetch("https://api.openai.com/v1/chat/completions", {
+    method:"POST",
+    headers:{ "Content-Type":"application/json",
+              "Authorization":"Bearer " + CONFIG.openaiKey },
+    body: JSON.stringify({ model:ASK_MODEL, messages:messages,
+                           max_tokens:maxTokens||220, temperature:0 })
+  }).then(function(r){
+    if(!r.ok) return r.text().then(function(t){ throw new Error(t.slice(0,160)); });
+    return r.json();
+  }).then(function(d){ return (d.choices && d.choices[0].message.content) || ""; });
+}
+
+var KINDS = ["pump","generator","light","vehicle","shelter","crew"];
+
+function interpret(question){
+  var sys = "You convert an emergency dispatcher's question into a JSON query against a " +
+    "resource registry. Reply with JSON ONLY, no prose, no code fences. Shape: " +
+    '{"kinds":[],"status":"available"|"any","place":"","radius_miles":5}. ' +
+    "kinds must be a subset of: " + KINDS.join(", ") + ". " +
+    "Map meaning to kind: water/flooding/pumping -> pump; power/electricity -> generator; " +
+    "dark/visibility/night -> light; transport/evacuate/move people -> vehicle; " +
+    "housing/warming/cooling/beds -> shelter; people/personnel/team/medical -> crew. " +
+    "place is a Detroit street, intersection or landmark mentioned, else empty string. " +
+    "If no kind is implied, use an empty array.";
+  return askOpenAI([{role:"system",content:sys},{role:"user",content:question}], 160)
+    .then(function(txt){
+      var clean = txt.replace(/```json|```/g,"").trim();
+      try{ return JSON.parse(clean); }catch(e){ return { kinds:[], status:"any", place:"", radius_miles:5 }; }
+    });
+}
+
+function summarise(question, rows){
+  if(!rows.length){
+    return Promise.resolve("Nothing in the registry matches that. Widen the radius, or the " +
+      "resource may simply not be posted yet.");
+  }
+  var facts = rows.slice(0,8).map(function(r){
+    return "- " + r.name + " (" + r.agency + "), " + r.status +
+      (r.distance_m != null ? (", " + fmtDist(r.distance_m) + " away") : "") +
+      (r.capacity ? (", " + r.capacity) : "") +
+      (r.contact ? (", contact " + r.contact) : "") +
+      (r.minutes_since_update != null ? (", updated " + r.minutes_since_update + " min ago") : "");
+  }).join("\n");
+  var sys = "You are briefing an incident commander. Use ONLY the resource list given. Never " +
+    "invent a resource, an agency or a contact. Two sentences maximum. Lead with the single " +
+    "best option and who to call. If anything was updated more than 120 minutes ago, say the " +
+    "status is unverified.";
+  return askOpenAI([{ role:"system", content:sys },
+                    { role:"user", content:"Question: " + question + "\n\nResources:\n" + facts }], 180);
+}
+
+function showAnswer(html){
+  document.getElementById("answer").innerHTML = html ? ('<div class="box">' + html + '</div>') : "";
+}
+
+/* The AI toggle: set a key, or clear it. Deliberately visible rather than buried, because a
+   driver of this app should always be able to tell whether a question is being answered by a
+   model or by a plain search — and be able to turn the model off. */
+function refreshAiBtn(){
+  var b = document.getElementById("aiBtn");
+  if(!b) return;
+  var on = !!CONFIG.openaiKey;
+  b.classList.toggle("on", on);
+  b.textContent = on ? "AI ON" : "AI OFF";
+  b.title = on ? "Plain-language questions enabled — tap to remove the key"
+               : "Tap to add an OpenAI key and enable plain-language questions";
+}
+document.getElementById("aiBtn").onclick = function(){
+  if(CONFIG.openaiKey){
+    if(confirm("Remove the stored OpenAI key from this browser?")){
+      CONFIG.openaiKey = "";
+      try{ localStorage.removeItem("ma_openai_key"); }catch(e){}
+      refreshAiBtn();
+      toastMsg("Key removed. Search still works — it just won't answer in plain language.");
+    }
+    return;
+  }
+  var k = prompt("Paste an OpenAI API key (sk-...).\n\nStored only in this browser, never in " +
+                 "the repository. Clear it any time by tapping AI again.");
+  if(!k) return;
+  k = k.trim();
+  if(k.indexOf("sk-") !== 0){ toastMsg("That doesn't look like an OpenAI key — it should start with sk-"); return; }
+  CONFIG.openaiKey = k;
+  try{ localStorage.setItem("ma_openai_key", k); }catch(e){}
+  refreshAiBtn();
+  toastMsg("AI on. Try: what can put water on a fire near Chene?");
+};
+refreshAiBtn();
+
+/* ═══════════ ONE BOX, THREE KINDS OF INPUT ═══════════
+   What the user typed decides the path, so they never have to:
+     "42.33,-83.05"          → search that point, no network beyond the registry
+     "pumps near Chene"      → the model reads intent and place, then the DATABASE answers
+     "3000 E Jefferson"      → geocode, then search that point
+   If the model isn't configured, it still works as plain search — the AI makes it better,
+   it is not load-bearing. A demo that dies because one API is slow is not a demo. */
+function findIt(){
+  var text = document.getElementById("q").value.trim();
+  if(!text){ loadAll(); showAnswer(""); return; }
+
+  var btn = document.getElementById("go"), label = btn.textContent;
+  function done(){ btn.textContent = label; btn.disabled = false; }
+  btn.textContent = "…"; btn.disabled = true;
+
+  // 1. coordinates typed directly
+  var direct = parseLatLng(text);
+  if(direct){ searchNear(direct.lat, direct.lng); showAnswer(""); done(); return; }
+
+  // 2. no model configured → behave as a plain address search
+  if(!CONFIG.openaiKey){
+    tryGeocode(geocodeVariants(text), 0).then(function(hit){
+      done();
+      if(hit){ searchNear(hit.lat, hit.lng); showAnswer(""); return; }
+      var c = map.getCenter();
+      searchNear(c.lat, c.lng);
+      toastMsg("Couldn't place that — showing what's near the centre of the map. Long-press the map to set a point.");
+    });
+    return;
+  }
+
+  // 3. full path: interpret → query the registry → summarise what came back
+  showAnswer("Reading the registry…");
+  interpret(text).then(function(q){
+    var place = (q.place || "").trim();
+    return (place ? tryGeocode(geocodeVariants(place), 0) : Promise.resolve(null))
+      .then(function(hit){
+        var c = hit || map.getCenter();
+        var radius = Math.max(800, Math.round((q.radius_miles || 5) * 1609));
+        return api("rpc/resources_near", { method:"POST", body:JSON.stringify({
+            in_lat:c.lat, in_lng:c.lng, radius_m:radius,
+            only_available:(q.status === "available") }) })
+          .then(function(d){
+            d = withAge(d);
+            if(q.kinds && q.kinds.length) d = d.filter(function(r){ return q.kinds.indexOf(r.kind) > -1; });
+            render(d);
+            if(incidentMarker) incidentMarker.remove();
+            incidentMarker = new maplibregl.Marker({ color:"#E5484D" })
+              .setLngLat([c.lng, c.lat]).addTo(map);
+            map.flyTo({ center:[c.lng, c.lat], zoom:13, duration:700 });
+            return summarise(text, d).then(function(answer){
+              /* Provenance under every answer. A number with no source is what gets a tool
+                 distrusted the first time it is wrong. */
+              var why = (q.kinds && q.kinds.length ? q.kinds.join(", ") : "all types") +
+                " within " + (q.radius_miles || 5) + " mi of " +
+                (hit ? place : "the map centre") + " · " + d.length +
+                " match" + (d.length === 1 ? "" : "es") +
+                " · from the registry, not the model's memory";
+              showAnswer(esc(answer).replace(/\n/g,"<br>") +
+                         '<span class="why">' + esc(why) + '</span>');
+            });
+          });
+      });
+  }).catch(function(e){
+    showAnswer("Couldn't answer that. " + esc((e && e.message) || ""));
+  }).then(done);
+}
+
+document.getElementById("go").onclick = findIt;
+document.getElementById("q").addEventListener("keydown", function(e){
+  if(e.key === "Enter") findIt();
+});
 
 var _toastT = null;
 function toastMsg(msg){
@@ -393,7 +590,6 @@ function toastMsg(msg){
   clearTimeout(_toastT);
   _toastT = setTimeout(function(){ t.className = ""; }, 5200);
 }
-document.getElementById("kind").onchange = loadAll;
 
 document.getElementById("addBtn").onclick = function(){
   document.getElementById("add").classList.add("on");
