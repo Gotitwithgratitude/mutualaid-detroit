@@ -76,6 +76,10 @@
     color:var(--text);border-radius:9px;padding:10px;font-size:15px;font-family:inherit}
   .two{display:flex;gap:10px}.two .fld{flex:1}
   .hint{font-size:12px;color:var(--mute);margin:-2px 0 12px;line-height:1.45}
+  /* Version badge. Same reason ConeWatch has one: without it you cannot tell whether the page
+     in front of you is the build you just uploaded, and you end up debugging a cached copy. */
+  .ver{font-family:var(--tech);font-size:9.5px;letter-spacing:1.1px;color:var(--alert);
+    border:1px solid rgba(229,72,77,.4);border-radius:999px;padding:3px 8px}
   #coords{margin-left:auto;font-family:var(--tech);font-size:10.5px;color:var(--mute);
     border:1px solid var(--line);border-radius:999px;padding:3px 9px;cursor:pointer;
     white-space:nowrap}
@@ -112,6 +116,21 @@
     color:var(--text)}
   #recent .chip i{font-style:normal;font-family:var(--tech);font-size:10px;color:var(--mute);
     margin-left:5px}
+  #req{position:absolute;inset:0;z-index:9;background:rgba(6,8,10,.86);display:none;
+    align-items:flex-end}
+  #req.on{display:flex}
+  #openreqs{padding:0 14px;display:none}
+  #openreqs.on{display:block}
+  .rq{background:rgba(229,72,77,.09);border:1px solid rgba(229,72,77,.38);
+    border-left:3px solid var(--alert);border-radius:11px;padding:11px 13px;margin-bottom:9px}
+  .rq .t{font-weight:700;font-size:14px}
+  .rq .m{font-family:var(--tech);font-size:11px;color:var(--mute);margin-top:3px;line-height:1.45}
+  .rq .acts{display:flex;gap:8px;margin-top:9px}
+  .rq .acts button{flex:1;border-radius:9px;padding:9px;font-size:13px;font-weight:700;
+    font-family:inherit;cursor:pointer;border:1px solid var(--line);background:var(--panel2);
+    color:var(--text)}
+  .rq .acts .ok{background:var(--ready);border-color:var(--ready);color:#06210f}
+  .rq .acts .no{color:var(--alert);border-color:rgba(229,72,77,.45)}
   #toast{position:fixed;left:50%;bottom:calc(18px + env(safe-area-inset-bottom,0px));
     transform:translate(-50%,120%);z-index:20;max-width:min(560px,92vw);
     background:#1A1E24;border:1px solid var(--line);border-left:3px solid var(--pending);
@@ -127,6 +146,7 @@
 
 <header>
   <span class="mark">Mutual<b>Aid</b> Detroit</span>
+  <span class="ver" id="ver">v2.0</span>
   <span class="demo">Demonstration data</span>
   <span id="coords" title="Tap to copy">—</span>
   <button id="aiBtn" title="Plain-language questions">AI</button>
@@ -148,6 +168,9 @@
        registry already knows — updated_at is the answer — so surfacing it costs nothing and is
        the clearest argument for why keeping status current matters. -->
   <div id="recent"></div>
+  <!-- Open requests sit ABOVE everything. An unanswered ask is the only thing in this app with
+       someone waiting on the other end of it. -->
+  <div id="openreqs"></div>
   <div id="list"><div class="empty">Loading resources…</div></div>
 </div>
 
@@ -169,7 +192,34 @@
     </div>
     <p class="hint" id="st_note">Updating stamps the time, so everyone else can see how fresh
     this is.</p>
-    <button class="btn ghost" id="st_close" style="width:100%">Close</button>
+    <div class="two" style="margin-top:4px">
+      <button class="btn" id="st_request" style="flex:2">Request this</button>
+      <button class="btn ghost" id="st_close" style="flex:1">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ REQUEST ═══════════
+     Finding a pump is step zero. What Tony described was being NOTIFIED that a resource is
+     needed — so the request is the product, and the search is how you address it. Both sides
+     see the same record and every state change is timestamped, because the question after an
+     incident is always "when did we ask, and when did they answer". -->
+<div id="req">
+  <div class="modal">
+    <h3 id="rq_title">Request resource</h3>
+    <p class="hint" id="rq_meta"></p>
+    <div class="fld"><label>Requesting agency</label>
+      <input id="rq_by" placeholder="DFD Battalion 5" /></div>
+    <div class="fld"><label>Incident</label>
+      <input id="rq_inc" placeholder="Structure fire, Jefferson &amp; Chene" /></div>
+    <div class="fld"><label>Note (optional)</label>
+      <input id="rq_note" placeholder="Need on scene within 20 min" /></div>
+    <p class="hint">The owning agency sees this against their resource and can accept, decline,
+    or release it. Accepting marks the resource committed automatically.</p>
+    <div class="two">
+      <button class="btn ghost" id="rq_cancel" style="flex:1">Cancel</button>
+      <button class="btn" id="rq_send" style="flex:2">Send request</button>
+    </div>
   </div>
 </div>
 
@@ -743,6 +793,106 @@ Array.prototype.forEach.call(document.querySelectorAll(".stbtn"), function(btn){
   };
 });
 
+/* ── the request loop ──
+   One rule enforced in the database, not here: answering a request and changing the resource's
+   status are a single action (see answer_request in setup.sql). Two separate writes would drift
+   — someone accepts and forgets to mark the pump committed — and then the map lies to the next
+   commander who reads it. */
+var _rqFor = null;
+
+document.getElementById("st_request").onclick = function(){
+  if(!_stCurrent) return;
+  _rqFor = _stCurrent;
+  document.getElementById("rq_title").textContent = "Request: " + _rqFor.name;
+  document.getElementById("rq_meta").textContent =
+    "Owned by " + _rqFor.agency + (_rqFor.contact ? (" · " + _rqFor.contact) : "");
+  try{ document.getElementById("rq_by").value = localStorage.getItem("ma_agency") || ""; }catch(e){}
+  closeStatus();
+  document.getElementById("req").classList.add("on");
+};
+document.getElementById("rq_cancel").onclick = function(){
+  document.getElementById("req").classList.remove("on");
+};
+document.getElementById("req").onclick = function(e){
+  if(e.target.id === "req") document.getElementById("req").classList.remove("on");
+};
+
+document.getElementById("rq_send").onclick = function(){
+  if(!_rqFor) return;
+  var by = document.getElementById("rq_by").value.trim();
+  if(!by){ toastMsg("Who is requesting? Enter the agency."); return; }
+  try{ localStorage.setItem("ma_agency", by); }catch(e){}   // remember, so the second request is one tap
+  var c = map.getCenter();
+  api("requests", { method:"POST", headers:{ "Prefer":"return=minimal" },
+    body: JSON.stringify({
+      resource_id: _rqFor.id,
+      requested_by: by,
+      incident: document.getElementById("rq_inc").value.trim() || null,
+      note: document.getElementById("rq_note").value.trim() || null,
+      lat: c.lat, lng: c.lng
+    })
+  }).then(function(){
+    document.getElementById("req").classList.remove("on");
+    document.getElementById("rq_note").value = "";
+    toastMsg("Request sent to " + _rqFor.agency + ". They'll see it against their resource.");
+    loadRequests();
+  }).catch(function(e){ toastMsg("Couldn't send: " + ((e && e.message) || "")); });
+};
+
+/* Open requests, newest first. Shown above the registry because an unanswered ask is the only
+   thing here with a person waiting on the other end of it. */
+function loadRequests(){
+  api("requests?select=*&state=eq.pending&order=created_at.desc")
+    .then(renderRequests)
+    .catch(function(){ /* registry still works without this — never block the map on it */ });
+}
+
+function renderRequests(list){
+  var el = document.getElementById("openreqs");
+  if(!el) return;
+  list = list || [];
+  if(!list.length){ el.className = ""; el.innerHTML = ""; return; }
+  el.className = "on";
+  el.innerHTML = '<div class="rhead" style="font-family:var(--tech);font-size:10px;' +
+    'letter-spacing:1.2px;text-transform:uppercase;color:var(--mute);margin:2px 0 7px">' +
+    list.length + ' open request' + (list.length === 1 ? '' : 's') + '</div>' +
+    list.map(function(q){
+      var r = rows.filter(function(x){ return x.id === q.resource_id; })[0];
+      var mins = Math.round((Date.now() - new Date(q.created_at).getTime())/60000);
+      return '<div class="rq" data-id="'+q.id+'">' +
+        '<div class="t">' + esc(r ? r.name : "Resource") + '</div>' +
+        '<div class="m">' + esc(q.requested_by) + ' asked' +
+          (q.incident ? (' · ' + esc(q.incident)) : '') +
+          ' · ' + esc(humanAge(mins, q.created_at)) +
+          (q.note ? ('<br>' + esc(q.note)) : '') + '</div>' +
+        '<div class="acts">' +
+          '<button class="ok" data-a="accepted">Accept</button>' +
+          '<button class="no" data-a="declined">Decline</button>' +
+        '</div></div>';
+    }).join("");
+
+  Array.prototype.forEach.call(el.querySelectorAll(".rq"), function(card){
+    Array.prototype.forEach.call(card.querySelectorAll("button"), function(b){
+      b.onclick = function(){
+        answerRequest(+card.dataset.id, b.dataset.a);
+      };
+    });
+  });
+}
+
+function answerRequest(id, state){
+  api("rpc/answer_request", { method:"POST", headers:{ "Prefer":"return=minimal" },
+      body: JSON.stringify({ in_id:id, in_state:state }) })
+    .then(function(){
+      toastMsg(state === "accepted"
+        ? "Accepted — resource marked committed, requester notified."
+        : "Declined — requester notified, resource unchanged.");
+      loadAll();          // resource status changed underneath us
+      loadRequests();
+    })
+    .catch(function(e){ toastMsg("Couldn't answer: " + ((e && e.message) || "")); });
+}
+
 document.getElementById("addBtn").onclick = function(){
   document.getElementById("add").classList.add("on");
 };
@@ -773,7 +923,8 @@ document.getElementById("saveAdd").onclick = function(){
     .catch(function(e){ alert("Could not post: " + (e && e.message)); });
 };
 
-map.on("load", loadAll);
+map.on("load", function(){ loadAll(); loadRequests(); });
+setInterval(loadRequests, 20000);   // an unanswered request should not need a refresh to appear
 </script>
 </body>
 </html>
