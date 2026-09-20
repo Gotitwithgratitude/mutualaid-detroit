@@ -43,9 +43,14 @@
     padding-bottom:env(safe-area-inset-bottom,0px)}
   /* The grip is a real handle: drag it, or tap it to cycle. Collapsing it is also how you get a
      full-screen map — one mechanic, two needs, rather than a separate expand button. */
-  .grip{width:100%;padding:9px 0 5px;flex:0 0 auto;cursor:grab;touch-action:none}
-  .grip::after{content:"";display:block;width:38px;height:4px;border-radius:3px;
-    background:rgba(235,235,245,.22);margin:0 auto}
+  /* The handle was a 4px line with ~14px of padding — fine for a mouse, wrong for a thumb, and
+     badly wrong for a gloved one. Apple's own floor is 44px and that is a minimum, not a target.
+     The visible line stays thin; the thing you can actually hit is 52px tall and full width. */
+  .grip{width:100%;min-height:52px;display:flex;align-items:center;justify-content:center;
+    flex:0 0 auto;cursor:grab;touch-action:none;margin-bottom:-14px}
+  .grip::after{content:"";display:block;width:52px;height:5px;border-radius:3px;
+    background:rgba(235,235,245,.28);transition:width .18s,background .18s}
+  .grip:active::after{width:72px;background:rgba(235,235,245,.6)}
   #sheet.dragging{transition:none}
   #sheet.dragging .grip::after{width:54px;background:rgba(235,235,245,.5)}
   .bar{display:flex;gap:8px;align-items:center;padding:6px 14px 10px;flex-wrap:wrap;flex:0 0 auto}
@@ -154,6 +159,19 @@
   /* Given a visual budget, spend it here. This is the payoff of the whole chain — the moment the
      system says "this is real, and here is who says so". Everything else stays quiet so this
      reads as the finished thing. */
+  #inbound{padding:0 14px;display:none}
+  #inbound.on{display:block}
+  #inbound .hd{font-family:var(--tech);font-size:10px;letter-spacing:1.2px;text-transform:uppercase;
+    color:var(--mute);margin:2px 0 7px}
+  #inbound .card{border-color:rgba(232,179,57,.4);background:rgba(232,179,57,.07)}
+  #inbound .card.landed{border-color:var(--ready);background:rgba(63,191,127,.12);
+    animation:landpulse 2.4s ease-in-out infinite}
+  @keyframes landpulse{0%,100%{box-shadow:0 0 0 0 rgba(63,191,127,.34)}
+                       50%{box-shadow:0 0 0 7px rgba(63,191,127,0)}}
+  @media (prefers-reduced-motion:reduce){#inbound .card.landed{animation:none}}
+  #inbound .nx{margin-top:9px;width:100%;border:none;border-radius:9px;padding:11px;
+    font-size:14px;font-weight:700;font-family:inherit;cursor:pointer;
+    background:var(--ready);color:#06210f}
   .vb{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:9px;padding:8px 11px;
     border-radius:9px;position:relative;overflow:hidden;
     background:linear-gradient(135deg,rgba(63,191,127,.16),rgba(110,86,207,.14));
@@ -206,8 +224,8 @@
 <div id="map"></div>
 
 <header>
-  <span class="mark">Cay<b>Link</b></span>
-  <span class="ver" id="ver">v3.4</span>
+  <span class="mark">CAY<b>-LINK</b></span>
+  <span class="ver" id="ver">v3.5</span>
   <span class="demo">Demonstration data</span>
   <span class="sub">Shared resource registry for Detroit emergency response</span>
   <span id="coords" title="Tap to copy">—</span>
@@ -236,6 +254,10 @@
   <!-- A commit is a receipt, not a notification: if your agency is holding something, that fact
        should stay on screen with its next action, not scroll away behind a timer. -->
   <div id="mine"></div>
+  <!-- The other side of the chain. Someone committed a pump to your incident; until now the only
+       way to know where it was, was to go looking for it. Inbound shows what is coming, what is
+       en route, and — loudly — what has landed and is waiting on your confirmation. -->
+  <div id="inbound"></div>
   <div id="list"><div class="empty">Loading resources…</div></div>
 </div>
 
@@ -450,6 +472,7 @@ function render(list){
 
   renderRecent();
   loadMine();
+  loadInbound();
 
   rows.forEach(function(r){
     var c = statusOf(r.status).color;
@@ -516,6 +539,60 @@ function loadMine(){
         })
         .catch(function(e){ toastMsg(e.message, "err"); });
     };
+  });
+}
+
+/* ── inbound ──
+   Everything committed to an incident this agency is running. The interesting state is "arrived":
+   the equipment is physically there and nobody has confirmed it yet, which in a real incident is
+   the gap where a pump sits on a truck for ten minutes because two people each assumed the other
+   had checked. It gets the loudest treatment on the screen. */
+var _seenArrived = {};
+
+function loadInbound(){
+  var el = document.getElementById("inbound");
+  if(!el) return;
+  var who = me();
+  if(!who){ el.className = ""; el.innerHTML = ""; return; }
+
+  var mine = rows.filter(function(r){
+    return r.held_by && r.held_by.toLowerCase() === who.toLowerCase() &&
+           (r.status === "en_route" || r.status === "arrived");
+  });
+  if(!mine.length){ el.className = ""; el.innerHTML = ""; return; }
+
+  /* announce a landing once, and keep announcing nothing after that */
+  mine.forEach(function(r){
+    if(r.status === "arrived" && !_seenArrived[r.id]){
+      _seenArrived[r.id] = true;
+      toastMsg("ARRIVED · " + r.name + " is at " + (r.destination || "the scene") +
+               " — confirm it and check it works", "ok");
+      try{ if(navigator.vibrate) navigator.vibrate([40,60,40]); }catch(e){}
+    }
+    if(r.status !== "arrived") delete _seenArrived[r.id];
+  });
+
+  el.className = "on";
+  el.innerHTML = '<div class="hd">Inbound to your incidents</div>' +
+    mine.map(function(r, i){
+      var landed = r.status === "arrived";
+      return '<div class="card' + (landed ? ' landed' : '') + '" data-i="' + i + '">' +
+        '<div class="row"><div><div class="name">' + esc(r.name) + '</div>' +
+        '<div class="meta">' + esc(r.held_for || "") +
+          (r.destination ? (' → ' + esc(r.destination)) : '') +
+          (!landed && r.eta_minutes ? (' · ETA ' + r.eta_minutes + ' min') : '') +
+        '</div></div>' +
+        '<span class="pill ' + esc(r.status) + '">' +
+          (landed ? 'On site' : 'En route') + '</span></div>' +
+        (landed ? '<button class="nx">Confirm arrival &amp; condition</button>' : '') +
+        '</div>';
+    }).join("");
+
+  Array.prototype.forEach.call(el.querySelectorAll(".card"), function(card){
+    var r = mine[+card.dataset.i];
+    var b = card.querySelector(".nx");
+    if(b) b.onclick = function(ev){ ev.stopPropagation(); openStatus(r); };
+    card.onclick = function(){ map.flyTo({ center:[r.lng, r.lat], zoom:15, duration:700 }); };
   });
 }
 
@@ -1149,7 +1226,9 @@ document.getElementById("saveAdd").onclick = function(){
   grip.addEventListener("pointermove", function(e){
     if(!dragging) return;
     var dy = e.clientY - startY;
-    if(Math.abs(dy) > 3) moved = true;
+    /* 3px called almost every tap a drag on a touch screen — a thumb never lands perfectly
+       still. 10px is the usual floor for distinguishing intent. */
+    if(Math.abs(dy) > 10) moved = true;
     var y = Math.max(det[0], Math.min(det[det.length-1], startT + dy));
     sheet.style.setProperty("--sheetY", y + "px");
   });
@@ -1172,7 +1251,10 @@ document.getElementById("saveAdd").onclick = function(){
 })();
 
 map.on("load", function(){ loadAll(); loadRequests(); });
-setInterval(loadRequests, 20000);   // an unanswered request should not need a refresh to appear
+setInterval(loadRequests, 20000);
+/* Arrivals should surface on their own. Fifteen seconds is frequent enough that a landing feels
+   immediate and light enough that it is not a load on the database. */
+setInterval(loadAll, 15000);   // an unanswered request should not need a refresh to appear
 </script>
 </body>
 </html>
