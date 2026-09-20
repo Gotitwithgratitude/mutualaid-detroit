@@ -73,8 +73,9 @@
     align-items:flex-end}
   #add.on{display:flex}
   .modal{width:100%;background:var(--panel);border-radius:18px 18px 0 0;
-    border-top:1px solid var(--line);padding:16px 16px calc(20px + env(safe-area-inset-bottom,0px));
-    max-height:88%;overflow-y:auto}
+    border-top:1px solid var(--line);
+    padding:16px 16px calc(34px + env(safe-area-inset-bottom,0px));
+    max-height:86%;overflow-y:auto}
   .modal h3{margin:4px 0 10px;font-size:16px}
   .fld{margin-bottom:10px}
   .fld label{display:block;font-family:var(--tech);font-size:10px;letter-spacing:1.1px;
@@ -183,7 +184,7 @@
 
 <header>
   <span class="mark">Cay<b>Link</b></span>
-  <span class="ver" id="ver">v3.2</span>
+  <span class="ver" id="ver">v3.3</span>
   <span class="demo">Demonstration data</span>
   <span class="sub">Shared resource registry for Detroit emergency response</span>
   <span id="coords" title="Tap to copy">—</span>
@@ -270,7 +271,7 @@
 </div>
 
 <script>
-/* ═══════════ MutualAid Detroit ═══════════
+/* ═══════════ CayLink — Detroit ═══════════
    CONFIG is the single source of truth. Every value the app needs is read from here and
    nowhere else — no second copy of a URL, a colour, or a status list anywhere in this file.
    Config that exists in two places drifts apart, and the resulting bug always looks like
