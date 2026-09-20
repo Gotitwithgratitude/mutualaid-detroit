@@ -234,7 +234,7 @@
 
 <header>
   <span class="mark">CAY<b>-LINK</b></span>
-  <span class="ver" id="ver">v3.8</span>
+  <span class="ver" id="ver">v3.9</span>
   <span class="demo">Demonstration data</span>
   <span class="sub">Shared resource registry for Detroit emergency response</span>
   <span id="coords" title="Tap to copy">—</span>
@@ -351,7 +351,10 @@ var CONFIG = {
      function and the key never reaches a browser at all. But it is honest for a five-day build,
      it keeps a real credential out of a public repo, and anyone cloning this repo supplies
      their own key rather than spending mine. */
+  /* No key here, and none needed: the model call goes through a Supabase Edge Function that
+     holds the key as a server secret. This slot is only a developer fallback for a local clone. */
   openaiKey: (function(){ try{ return localStorage.getItem("cay_openai_key") || ""; }catch(e){ return ""; } })(),
+  forceLocalKey: false,
   center: [-83.0458, 42.3314],
   zoom: 11.4,
   radiusM: 8000,
@@ -763,8 +766,41 @@ map.on("contextmenu", function(e){ toastMsg("Incident set at " + fmtCoord(e.lngL
    A single call that did both would let the model answer from memory instead of from data. */
 var ASK_MODEL = "gpt-4o-mini";
 
+/* The model call now goes to OUR server, not OpenAI. The key lives in Supabase as a secret, so
+   no visitor needs to supply one and nothing sensitive appears in this file. If the function is
+   not deployed, the app falls back to a key the user has pasted locally — so a fresh clone still
+   works for a developer, and the feature degrades rather than disappearing. */
 function askOpenAI(messages, maxTokens){
-  if(!CONFIG.openaiKey) return Promise.reject(new Error("no-key"));
+  var viaServer = CONFIG.supabaseUrl && !CONFIG.forceLocalKey;
+  if(viaServer){
+    return fetch(CONFIG.supabaseUrl.replace(".supabase.co", ".supabase.co") + "/functions/v1/ask", {
+      method:"POST",
+      headers:{ "Content-Type":"application/json",
+                "Authorization":"Bearer " + CONFIG.supabaseKey },
+      body: JSON.stringify({ messages:messages, max_tokens:maxTokens||220 })
+    }).then(function(r){
+      if(!r.ok){
+        return r.text().then(function(t){
+          /* Not deployed yet, or no secret set. Fall back rather than failing the user. */
+          if(r.status === 404 || r.status === 500) throw new Error("__fallback__");
+          var m = t; try{ m = JSON.parse(t).error || t; }catch(e){}
+          throw new Error(m);
+        });
+      }
+      return r.json();
+    }).then(function(d){ return d.content || ""; })
+      .catch(function(e){
+        if(e && e.message === "__fallback__" || e instanceof TypeError) return askLocal(messages, maxTokens);
+        throw e;
+      });
+  }
+  return askLocal(messages, maxTokens);
+}
+
+/* Developer fallback: a key the user pasted into this browser. Never committed, never shared. */
+function askLocal(messages, maxTokens){
+  if(!CONFIG.openaiKey) return Promise.reject(new Error(
+    "Plain-language search isn't configured on this deployment yet."));
   return fetch("https://api.openai.com/v1/chat/completions", {
     method:"POST",
     headers:{ "Content-Type":"application/json",
@@ -772,7 +808,10 @@ function askOpenAI(messages, maxTokens){
     body: JSON.stringify({ model:ASK_MODEL, messages:messages,
                            max_tokens:maxTokens||220, temperature:0 })
   }).then(function(r){
-    if(!r.ok) return r.text().then(function(t){ throw new Error(t.slice(0,160)); });
+    if(!r.ok) return r.text().then(function(t){
+      var m = t; try{ m = JSON.parse(t).error.message || t; }catch(e){}
+      throw new Error(m.slice(0,160));
+    });
     return r.json();
   }).then(function(d){ return (d.choices && d.choices[0].message.content) || ""; });
 }
@@ -842,7 +881,9 @@ function showAnswer(html){
 function refreshAiBtn(){
   var b = document.getElementById("aiBtn");
   if(!b) return;
-  var on = !!CONFIG.openaiKey;
+  /* Green whenever plain-language search is expected to work — which, once the function is
+     deployed, is for everyone, with no key pasted anywhere. */
+  var on = !!CONFIG.supabaseUrl || !!CONFIG.openaiKey;
   b.classList.toggle("on", on);
   b.textContent = on ? "AI ON" : "AI OFF";
   b.title = on ? "Plain-language questions enabled — tap to remove the key"
@@ -889,8 +930,8 @@ function findIt(){
   var direct = parseLatLng(text);
   if(direct){ searchNear(direct.lat, direct.lng); showAnswer(""); done(); return; }
 
-  // 2. no model configured → behave as a plain address search
-  if(!CONFIG.openaiKey){
+  // 2. no model available at all → behave as a plain address search
+  if(!CONFIG.supabaseUrl && !CONFIG.openaiKey){
     tryGeocode(geocodeVariants(text), 0).then(function(hit){
       done();
       if(hit){ searchNear(hit.lat, hit.lng); showAnswer(""); return; }
