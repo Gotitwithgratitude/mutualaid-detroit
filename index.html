@@ -150,28 +150,24 @@
   .sub{font-size:11.5px;color:var(--mute);flex-basis:100%;margin-top:-2px}
   #mine{padding:0 14px;display:none}
   #mine.on{display:block}
-  #mine .card{border-color:rgba(110,86,207,.4);background:rgba(110,86,207,.09)}
+  #mine .card{border-color:rgba(110,86,207,.34);background:rgba(110,86,207,.07)}
+  /* Only one state on this screen is urgent: something is physically here and unconfirmed.
+     Everything else stays quiet so that this reads as the exception it is. */
+  #mine .card.landed{border-color:rgba(63,191,127,.5);background:rgba(63,191,127,.09);
+    animation:landpulse 2.6s ease-in-out infinite}
+  @keyframes landpulse{0%,100%{box-shadow:0 0 0 0 rgba(63,191,127,.26)}
+                       50%{box-shadow:0 0 0 6px rgba(63,191,127,0)}}
+  @media (prefers-reduced-motion:reduce){#mine .card.landed{animation:none}}
   #mine .hd{font-family:var(--tech);font-size:10px;letter-spacing:1.2px;text-transform:uppercase;
     color:var(--mute);margin:2px 0 7px}
-  #mine .nx{margin-top:9px;width:100%;border:none;border-radius:9px;padding:10px;
-    font-size:13.5px;font-weight:700;font-family:inherit;cursor:pointer;
-    background:#6E56CF;color:#fff}
+  #mine .nx{margin-top:10px;width:100%;border:none;border-radius:9px;padding:12px;
+    font-size:14px;font-weight:700;font-family:inherit;cursor:pointer;
+    background:#5B48B0;color:#fff;letter-spacing:.2px}
+  #mine .nx.go{background:#2F9E68;color:#fff}
+  #mine .nx:active{filter:brightness(1.12)}
   /* Given a visual budget, spend it here. This is the payoff of the whole chain — the moment the
      system says "this is real, and here is who says so". Everything else stays quiet so this
      reads as the finished thing. */
-  #inbound{padding:0 14px;display:none}
-  #inbound.on{display:block}
-  #inbound .hd{font-family:var(--tech);font-size:10px;letter-spacing:1.2px;text-transform:uppercase;
-    color:var(--mute);margin:2px 0 7px}
-  #inbound .card{border-color:rgba(232,179,57,.4);background:rgba(232,179,57,.07)}
-  #inbound .card.landed{border-color:var(--ready);background:rgba(63,191,127,.12);
-    animation:landpulse 2.4s ease-in-out infinite}
-  @keyframes landpulse{0%,100%{box-shadow:0 0 0 0 rgba(63,191,127,.34)}
-                       50%{box-shadow:0 0 0 7px rgba(63,191,127,0)}}
-  @media (prefers-reduced-motion:reduce){#inbound .card.landed{animation:none}}
-  #inbound .nx{margin-top:9px;width:100%;border:none;border-radius:9px;padding:11px;
-    font-size:14px;font-weight:700;font-family:inherit;cursor:pointer;
-    background:var(--ready);color:#06210f}
   .vb{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:9px;padding:8px 11px;
     border-radius:9px;position:relative;overflow:hidden;
     background:linear-gradient(135deg,rgba(63,191,127,.16),rgba(110,86,207,.14));
@@ -225,7 +221,7 @@
 
 <header>
   <span class="mark">CAY<b>-LINK</b></span>
-  <span class="ver" id="ver">v3.5</span>
+  <span class="ver" id="ver">v3.6</span>
   <span class="demo">Demonstration data</span>
   <span class="sub">Shared resource registry for Detroit emergency response</span>
   <span id="coords" title="Tap to copy">—</span>
@@ -254,10 +250,7 @@
   <!-- A commit is a receipt, not a notification: if your agency is holding something, that fact
        should stay on screen with its next action, not scroll away behind a timer. -->
   <div id="mine"></div>
-  <!-- The other side of the chain. Someone committed a pump to your incident; until now the only
-       way to know where it was, was to go looking for it. Inbound shows what is coming, what is
-       en route, and — loudly — what has landed and is waiting on your confirmation. -->
-  <div id="inbound"></div>
+
   <div id="list"><div class="empty">Loading resources…</div></div>
 </div>
 
@@ -472,7 +465,6 @@ function render(list){
 
   renderRecent();
   loadMine();
-  loadInbound();
 
   rows.forEach(function(r){
     var c = statusOf(r.status).color;
@@ -494,33 +486,59 @@ function render(list){
 
 /* Anything touched in the last hour. Deliberately a strip of chips rather than a second list:
    it is a glance, not a screen. */
-/* What YOUR agency is holding right now, with its next action one tap away. This is the
-   difference between a form you filled in and a system you are operating: the commitment stays
-   in front of you until it is finished. */
+/* ── your active resources ──
+   One strip, one line per resource, one button. The previous build had "holding" and "inbound"
+   as separate sections, which for a single agency is the SAME resource listed twice, asking the
+   same question in two different colours. That is the opposite of what someone rushing needs.
+   The only question worth putting on screen is "what do I do with this next", and there is
+   exactly one answer at any moment — so there is exactly one button. */
+var _seenArrived = {};
+
+var NEXT_STEP = {
+  committed: { label:"Mark en route",       to:"en_route" },
+  en_route:  { label:"Mark arrived",        to:"arrived"  },
+  arrived:   { label:"Confirm & check",     to:"check"    }
+};
+
 function loadMine(){
   var el = document.getElementById("mine");
   if(!el) return;
   var who = me();
   if(!who){ el.className = ""; el.innerHTML = ""; return; }
+
   var held = rows.filter(function(r){
-    return r.held_by && r.held_by.toLowerCase() === who.toLowerCase();
+    return r.held_by && r.held_by.toLowerCase() === who.toLowerCase() &&
+           NEXT_STEP[r.status];
   });
   if(!held.length){ el.className = ""; el.innerHTML = ""; return; }
+
+  /* a landing announces itself once — after that the card speaks for itself */
+  held.forEach(function(r){
+    if(r.status === "arrived" && !_seenArrived[r.id]){
+      _seenArrived[r.id] = true;
+      toastMsg("ARRIVED · " + r.name + " at " + (r.destination || "the scene") +
+               " — confirm it and check it works", "ok");
+      try{ if(navigator.vibrate) navigator.vibrate([40,60,40]); }catch(e){}
+    }
+    if(r.status !== "arrived") delete _seenArrived[r.id];
+  });
+
   el.className = "on";
-  var NEXT = { committed:["Mark en route","en_route"], en_route:["Mark arrived","arrived"] };
-  el.innerHTML = '<div class="hd">' + esc(who) + ' is holding ' + held.length +
-    (held.length === 1 ? ' resource' : ' resources') + '</div>' +
+  el.innerHTML = '<div class="hd">' + esc(who) + ' — ' + held.length +
+    (held.length === 1 ? ' resource in play' : ' resources in play') + '</div>' +
     held.map(function(r, i){
-      var n = NEXT[r.status];
-      return '<div class="card" data-i="' + i + '">' +
+      var n = NEXT_STEP[r.status];
+      var landed = r.status === "arrived";
+      return '<div class="card' + (landed ? ' landed' : '') + '" data-i="' + i + '">' +
         '<div class="row"><div><div class="name">' + esc(r.name) + '</div>' +
         '<div class="meta">' + esc(r.held_for || "") +
           (r.destination ? (' → ' + esc(r.destination)) : '') +
-          (r.eta_minutes ? (' · ETA ' + r.eta_minutes + 'm') : '') + '</div></div>' +
-        '<span class="pill ' + esc(r.status) + '">' + esc(statusOf(r.status).label) + '</span></div>' +
-        (n ? '<button class="nx" data-to="' + n[1] + '">' + n[0] + '</button>'
-           : '<button class="nx" data-to="check">On-site check</button>') +
-        '</div>';
+          (!landed && r.eta_minutes ? (' · ETA ' + r.eta_minutes + ' min') : '') +
+        '</div></div>' +
+        '<span class="pill ' + esc(r.status) + '">' + esc(statusOf(r.status).label) +
+        '</span></div>' +
+        '<button class="nx' + (landed ? ' go' : '') + '" data-to="' + n.to + '">' +
+          esc(n.label) + '</button></div>';
     }).join("");
 
   Array.prototype.forEach.call(el.querySelectorAll(".card"), function(card){
@@ -530,7 +548,9 @@ function loadMine(){
     b.onclick = function(ev){
       ev.stopPropagation();
       var to = b.dataset.to;
-      if(to === "check"){ openStatus(r); return; }     // the check needs a note and a verdict
+      /* the check is the one step that needs a human to say something, so it opens the sheet;
+         everything else is a single fact and commits straight away */
+      if(to === "check"){ openStatus(r); return; }
       rpc("advance_resource", { in_id:r.id, in_actor:who, in_to:to })
         .then(function(){
           toastMsg((to === "en_route" ? "EN ROUTE · " : "ARRIVED · ") + r.name +
@@ -539,60 +559,6 @@ function loadMine(){
         })
         .catch(function(e){ toastMsg(e.message, "err"); });
     };
-  });
-}
-
-/* ── inbound ──
-   Everything committed to an incident this agency is running. The interesting state is "arrived":
-   the equipment is physically there and nobody has confirmed it yet, which in a real incident is
-   the gap where a pump sits on a truck for ten minutes because two people each assumed the other
-   had checked. It gets the loudest treatment on the screen. */
-var _seenArrived = {};
-
-function loadInbound(){
-  var el = document.getElementById("inbound");
-  if(!el) return;
-  var who = me();
-  if(!who){ el.className = ""; el.innerHTML = ""; return; }
-
-  var mine = rows.filter(function(r){
-    return r.held_by && r.held_by.toLowerCase() === who.toLowerCase() &&
-           (r.status === "en_route" || r.status === "arrived");
-  });
-  if(!mine.length){ el.className = ""; el.innerHTML = ""; return; }
-
-  /* announce a landing once, and keep announcing nothing after that */
-  mine.forEach(function(r){
-    if(r.status === "arrived" && !_seenArrived[r.id]){
-      _seenArrived[r.id] = true;
-      toastMsg("ARRIVED · " + r.name + " is at " + (r.destination || "the scene") +
-               " — confirm it and check it works", "ok");
-      try{ if(navigator.vibrate) navigator.vibrate([40,60,40]); }catch(e){}
-    }
-    if(r.status !== "arrived") delete _seenArrived[r.id];
-  });
-
-  el.className = "on";
-  el.innerHTML = '<div class="hd">Inbound to your incidents</div>' +
-    mine.map(function(r, i){
-      var landed = r.status === "arrived";
-      return '<div class="card' + (landed ? ' landed' : '') + '" data-i="' + i + '">' +
-        '<div class="row"><div><div class="name">' + esc(r.name) + '</div>' +
-        '<div class="meta">' + esc(r.held_for || "") +
-          (r.destination ? (' → ' + esc(r.destination)) : '') +
-          (!landed && r.eta_minutes ? (' · ETA ' + r.eta_minutes + ' min') : '') +
-        '</div></div>' +
-        '<span class="pill ' + esc(r.status) + '">' +
-          (landed ? 'On site' : 'En route') + '</span></div>' +
-        (landed ? '<button class="nx">Confirm arrival &amp; condition</button>' : '') +
-        '</div>';
-    }).join("");
-
-  Array.prototype.forEach.call(el.querySelectorAll(".card"), function(card){
-    var r = mine[+card.dataset.i];
-    var b = card.querySelector(".nx");
-    if(b) b.onclick = function(ev){ ev.stopPropagation(); openStatus(r); };
-    card.onclick = function(){ map.flyTo({ center:[r.lng, r.lat], zoom:15, duration:700 }); };
   });
 }
 
