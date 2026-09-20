@@ -31,7 +31,10 @@
 
   #map{position:absolute;inset:0}
 
-  #sheet{position:absolute;left:0;right:0;bottom:0;z-index:6;height:64%;
+  /* Tall enough to open all the way: the sheet's natural height is now most of the screen, and
+   the detents decide how much of it you see. Opening fully is as available as closing fully —
+   an asymmetric control is one people stop trusting. */
+  #sheet{position:absolute;left:0;right:0;bottom:0;z-index:6;height:92%;
     transform:translateY(var(--sheetY,0px));
     transition:transform .28s cubic-bezier(.32,.72,0,1);
     background:var(--panel);border-top:1px solid var(--line);
@@ -148,6 +151,26 @@
   #mine .nx{margin-top:9px;width:100%;border:none;border-radius:9px;padding:10px;
     font-size:13.5px;font-weight:700;font-family:inherit;cursor:pointer;
     background:#6E56CF;color:#fff}
+  /* Given a visual budget, spend it here. This is the payoff of the whole chain — the moment the
+     system says "this is real, and here is who says so". Everything else stays quiet so this
+     reads as the finished thing. */
+  .vb{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:9px;padding:8px 11px;
+    border-radius:9px;position:relative;overflow:hidden;
+    background:linear-gradient(135deg,rgba(63,191,127,.16),rgba(110,86,207,.14));
+    border:1px solid rgba(63,191,127,.42)}
+  .vb::after{content:"";position:absolute;inset:0;pointer-events:none;
+    background:linear-gradient(105deg,transparent 35%,rgba(255,255,255,.14) 50%,transparent 65%);
+    transform:translateX(-120%);animation:sheen 4.2s ease-in-out infinite}
+  @keyframes sheen{0%,72%{transform:translateX(-120%)}88%,100%{transform:translateX(120%)}}
+  @media (prefers-reduced-motion:reduce){.vb::after{animation:none}}
+  .vk{width:16px;height:16px;border-radius:50%;flex:0 0 auto;position:relative;
+    background:var(--ready);box-shadow:0 0 0 3px rgba(63,191,127,.22)}
+  .vk::after{content:"";position:absolute;left:5px;top:2.5px;width:4px;height:8px;
+    border:solid #06210f;border-width:0 2px 2px 0;transform:rotate(42deg)}
+  .vt{font-size:12.5px;font-weight:700;color:var(--ready);letter-spacing:.2px}
+  .vw{font-family:var(--tech);font-size:10.5px;color:var(--mute);letter-spacing:.4px;
+    text-transform:uppercase}
+  .vn{flex-basis:100%;font-size:12px;color:var(--mute);line-height:1.4}
   .fld{position:relative}
   .acbox{display:none;position:absolute;left:0;right:0;top:100%;z-index:12;margin-top:4px;
     background:#1A1E24;border:1px solid var(--line);border-radius:10px;overflow:hidden;
@@ -184,7 +207,7 @@
 
 <header>
   <span class="mark">Cay<b>Link</b></span>
-  <span class="ver" id="ver">v3.3</span>
+  <span class="ver" id="ver">v3.4</span>
   <span class="demo">Demonstration data</span>
   <span class="sub">Shared resource registry for Detroit emergency response</span>
   <span id="coords" title="Tap to copy">—</span>
@@ -345,6 +368,21 @@ function api(path, opts){
 function esc(s){ return String(s == null ? "" : s).replace(/[<>&"]/g, function(c){
   return { "<":"&lt;", ">":"&gt;", "&":"&amp;", '"':"&quot;" }[c]; }); }
 
+/* The verification mark. "It arrived" and "it works" are different facts, and only the second
+   matters to whoever asked for it. Attribution is the point: an anonymous "verified" is a
+   rumour — "verified by DPD at 9:23 PM" is something you can act on, and something the wrong
+   person can be held to afterwards. */
+function verifiedBadge(r){
+  if(!r.verified_by || !r.verified_at) return "";
+  var t = "";
+  try{ t = new Date(r.verified_at).toLocaleTimeString([], {hour:"numeric",minute:"2-digit"}); }catch(e){}
+  return '<div class="vb"><span class="vk"></span>' +
+         '<span class="vt">Verified operational</span>' +
+         '<span class="vw">' + esc(r.verified_by) + (t ? (' · ' + t) : '') + '</span>' +
+         (r.verified_note ? ('<span class="vn">' + esc(r.verified_note) + '</span>') : '') +
+         '</div>';
+}
+
 function statusOf(k){ return STATUS[k] || { label:k, color:"#98A1AE" }; }
 
 function clearMarkers(){ markers.forEach(function(m){ m.remove(); }); markers = []; }
@@ -407,7 +445,7 @@ function render(list){
         (ageTxt ? (' · <span class="'+(stale?"stale":"")+'">'+ageTxt+(stale?" — unverified":"")+'</span>') : "")+
       '</div></div>'+
       '<span class="pill '+esc(r.status)+'">'+esc(st.label)+'</span>'+
-      '</div></div>';
+      '</div>'+verifiedBadge(r)+'</div>';
   }).join("");
 
   renderRecent();
@@ -902,8 +940,11 @@ function bodyFor(r){
 
   if(r.status === "out_of_service"){
     return '<p class="hint">Out of service' + (r.oos_reason ? (" — " + esc(r.oos_reason)) : "") +
-      '. It will not appear as available until an agency returns it to service.</p>' +
-      '<button class="btn" id="a_back" style="width:100%">Back in service</button>';
+      '. It will not appear as available until someone returns it to service and says what was ' +
+      'done. A resource that silently reappears teaches everyone to distrust the board.</p>' +
+      fld("b_by","Your agency","DPW Yard 3", me()) +
+      fld("b_note","What was wrong, and what was done","Impeller replaced, tested at full flow") +
+      '<button class="btn" id="a_back" style="width:100%">Return to service</button>';
   }
 
   if(r.status === "available"){
@@ -943,7 +984,8 @@ function bodyFor(r){
   if(r.status === "arrived"){
     return held + '<p class="hint">On-site check. A pump that showed up broken is not a delivered ' +
       'resource, and the registry should say so rather than quietly counting it.</p>' +
-      fld("k_note","Note (optional)","Primed and running") +
+      fld("k_by","Confirming agency","DFD Battalion 5", me()) +
+      fld("k_note","Note (optional)","Primed and running at full flow") +
       '<div class="two"><button class="btn" id="a_ok" style="flex:1">Works — in use</button>' +
       '<button class="btn ghost" id="a_bad" style="flex:1">Not working</button></div>' +
       '<button class="btn ghost" id="a_release" style="width:100%;margin-top:8px">Release</button>';
@@ -956,7 +998,7 @@ function val(id){ var e = document.getElementById(id); return e ? e.value.trim()
 function after(msg){ closeStatus(); toastMsg(msg, "ok"); loadAll(); loadMine(); }
 
 function wireBody(r){
-  attachAgency("c_by"); attachAgency("q_by");
+  attachAgency("c_by"); attachAgency("q_by"); attachAgency("k_by"); attachAgency("b_by");
   var on = function(id, fn){ var e = document.getElementById(id); if(e) e.onclick = fn; };
 
   on("a_commit", function(){
@@ -985,13 +1027,19 @@ function wireBody(r){
   });
 
   on("a_ok", function(){
-    rpc("confirm_arrival", { in_id:r.id, in_actor:me(), in_working:true, in_note:val("k_note") })
-      .then(function(){ after("CHECKED · " + r.name + " on site and operational"); })
+    var by = val("k_by") || me();
+    if(!by){ toastMsg("Who is confirming this?", "err"); return; }
+    setMe(by);
+    rpc("confirm_arrival", { in_id:r.id, in_actor:by, in_working:true, in_note:val("k_note") })
+      .then(function(){ after("VERIFIED · " + r.name + " operational · confirmed by " + by); })
       .catch(function(e){ toastMsg(e.message, "err"); });
   });
 
   on("a_bad", function(){
-    rpc("confirm_arrival", { in_id:r.id, in_actor:me(), in_working:false,
+    var byBad = val("k_by") || me();
+    if(!byBad){ toastMsg("Who is confirming this?", "err"); return; }
+    setMe(byBad);
+    rpc("confirm_arrival", { in_id:r.id, in_actor:byBad, in_working:false,
         in_note: val("k_note") || "failed on-site check" })
       .then(function(){ after("OUT OF SERVICE · " + r.name + " failed the on-site check"); })
       .catch(function(e){ toastMsg(e.message, "err"); });
@@ -1012,15 +1060,12 @@ function wireBody(r){
   });
 
   on("a_back", function(){
-    rpc("advance_resource", { in_id:r.id, in_actor: r.held_by || me() || "unattributed",
-        in_to:"released", in_detail:"returned to service" })
-      .then(function(){ after("BACK IN SERVICE · " + r.name); })
-      .catch(function(){
-        // not held by anyone — clear it directly
-        api("resources?id=eq."+r.id, { method:"PATCH", headers:{Prefer:"return=minimal"},
-            body: JSON.stringify({ status:"available", oos_reason:null }) })
-          .then(function(){ after("BACK IN SERVICE · " + r.name); });
-      });
+    var by = val("b_by");
+    if(!by){ toastMsg("Who is returning this to service?", "err"); return; }
+    setMe(by);
+    rpc("return_to_service", { in_id:r.id, in_actor:by, in_note:val("b_note") })
+      .then(function(){ after("BACK IN SERVICE · " + r.name + " · verified by " + by); })
+      .catch(function(e){ toastMsg(e.message, "err"); });
   });
 
   on("a_req", function(){
@@ -1082,11 +1127,13 @@ document.getElementById("saveAdd").onclick = function(){
 (function(){
   var sheet = document.getElementById("sheet");
   var grip  = sheet.querySelector(".grip");
-  var det = [], idx = 1, startY = 0, startT = 0, dragging = false, moved = false;
+  var det = [], idx = 2, startY = 0, startT = 0, dragging = false, moved = false;
 
   function measure(){
     var h = sheet.offsetHeight;
-    det = [0, Math.round(h * 0.45), h - 108];   // full, half, peek
+    /* full (everything), two-thirds (map + a good list), half, peek (search only, map open) */
+    det = [0, Math.round(h * 0.34), Math.round(h * 0.56), h - 112];
+    idx = Math.min(idx, det.length - 1);
     if(idx >= det.length) idx = det.length - 1;
     apply();
   }
