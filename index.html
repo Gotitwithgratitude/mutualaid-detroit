@@ -30,12 +30,19 @@
     color:var(--pending);border:1px solid rgba(232,179,57,.4);border-radius:999px;padding:3px 8px}
 
   #map{position:absolute;inset:0}
+  #legend{position:absolute;left:12px;top:calc(76px + env(safe-area-inset-top,0px));z-index:4;
+    display:flex;flex-direction:column;gap:5px;background:rgba(11,13,16,.78);
+    border:1px solid var(--line);border-radius:10px;padding:9px 11px;
+    backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
+  #legend span{display:flex;align-items:center;gap:7px;font-family:var(--tech);font-size:10px;
+    letter-spacing:.7px;text-transform:uppercase;color:var(--mute);white-space:nowrap}
+  #legend i{width:9px;height:9px;border-radius:50%;flex:0 0 auto}
 
   /* Tall enough to open all the way: the sheet's natural height is now most of the screen, and
    the detents decide how much of it you see. Opening fully is as available as closing fully —
    an asymmetric control is one people stop trusting. */
   #sheet{position:absolute;left:0;right:0;bottom:0;z-index:6;height:92%;
-    transform:translateY(var(--sheetY,0px));
+    transform:translateY(var(--sheetY,0px));will-change:transform;
     transition:transform .28s cubic-bezier(.32,.72,0,1);
     background:var(--panel);border-top:1px solid var(--line);
     border-radius:18px 18px 0 0;display:flex;flex-direction:column;
@@ -147,7 +154,8 @@
     color:var(--text)}
   .rq .acts .ok{background:var(--ready);border-color:var(--ready);color:#06210f}
   .rq .acts .no{color:var(--alert);border-color:rgba(229,72,77,.45)}
-  .sub{font-size:11.5px;color:var(--mute);flex-basis:100%;margin-top:-2px}
+  .sub{font-family:var(--tech);font-size:10px;letter-spacing:1.3px;text-transform:uppercase;
+    color:var(--mute);flex-basis:100%;margin-top:-1px}
   #mine{padding:0 14px;display:none}
   #mine.on{display:block}
   #mine .card{border-color:rgba(110,86,207,.34);background:rgba(110,86,207,.07)}
@@ -164,6 +172,9 @@
     font-size:14px;font-weight:700;font-family:inherit;cursor:pointer;
     background:#5B48B0;color:#fff;letter-spacing:.2px}
   #mine .nx.go{background:#2F9E68;color:#fff}
+  .eta{color:var(--pending);font-family:var(--tech);font-size:11px}
+  .eta.due{color:var(--ready)}
+  .eta.late{color:var(--alert)}
   #mine .nx:active{filter:brightness(1.12)}
   /* Given a visual budget, spend it here. This is the payoff of the whole chain — the moment the
      system says "this is real, and here is who says so". Everything else stays quiet so this
@@ -208,10 +219,12 @@
     background:#1A1E24;border:1px solid var(--line);border-left:3px solid var(--pending);
     color:var(--text);border-radius:11px;padding:11px 14px;font-size:13.5px;line-height:1.45;
     box-shadow:0 12px 34px rgba(0,0,0,.55);transition:transform .26s cubic-bezier(.32,.72,0,1);
-    pointer-events:none;display:flex;gap:10px;align-items:flex-start}
+    display:flex;gap:10px;align-items:flex-start;pointer-events:none}
+  #toast.on{pointer-events:auto;cursor:pointer}
+  #toast *{pointer-events:none}
   #toast.on{transform:translate(-50%,0)}
   #toast.ok{border-left-color:var(--ready)}
-  #toast.err{border-left-color:var(--alert);pointer-events:auto;cursor:pointer}
+  #toast.err{border-left-color:var(--alert)}
   #toast .x{font-family:var(--tech);font-size:11px;color:var(--mute);margin-left:4px}
 </style>
 </head>
@@ -221,12 +234,22 @@
 
 <header>
   <span class="mark">CAY<b>-LINK</b></span>
-  <span class="ver" id="ver">v3.6</span>
+  <span class="ver" id="ver">v3.8</span>
   <span class="demo">Demonstration data</span>
   <span class="sub">Shared resource registry for Detroit emergency response</span>
   <span id="coords" title="Tap to copy">—</span>
   <button id="aiBtn" title="Plain-language questions">AI</button>
 </header>
+
+<!-- Colour with no key is decoration. Five dots on a map mean nothing until someone says what
+     they mean, and nobody reads a manual during an incident. -->
+<div id="legend">
+  <span><i style="background:#3FBF7F"></i>Available</span>
+  <span><i style="background:#E5484D"></i>Committed</span>
+  <span><i style="background:#E8B339"></i>En route</span>
+  <span><i style="background:#6E56CF"></i>On site</span>
+  <span><i style="background:#98A1AE"></i>Out of service</span>
+</div>
 
 <div id="sheet">
   <div class="grip"></div>
@@ -374,9 +397,22 @@ function api(path, opts){
     "Authorization": "Bearer " + CONFIG.supabaseKey,
     "Content-Type": "application/json"
   }, opts.headers || {});
+  /* Errors come back as the database's own words where possible. Safari's generic "the string
+     did not match the expected pattern" tells a user nothing; a missing table or a rejected
+     column tells them exactly what to fix. */
   return fetch(CONFIG.supabaseUrl + "/rest/v1/" + path, opts).then(function(r){
-    if(!r.ok) return r.text().then(function(t){ throw new Error(t || ("HTTP " + r.status)); });
-    return r.status === 204 ? null : r.json();
+    if(!r.ok){
+      return r.text().then(function(t){
+        var msg = t;
+        try{ var j = JSON.parse(t); msg = j.message || j.hint || j.details || t; }catch(e){}
+        if(r.status === 404) msg = "That table doesn't exist yet — run the SQL in Supabase.";
+        throw new Error(msg || ("HTTP " + r.status));
+      });
+    }
+    return r.status === 204 ? null : r.json().catch(function(){ return null; });
+  }).catch(function(e){
+    if(e instanceof TypeError) throw new Error("Network blocked the request — check the connection.");
+    throw e;
   });
 }
 
@@ -494,11 +530,31 @@ function render(list){
    exactly one answer at any moment — so there is exactly one button. */
 var _seenArrived = {};
 
-var NEXT_STEP = {
-  committed: { label:"Mark en route",       to:"en_route" },
-  en_route:  { label:"Mark arrived",        to:"arrived"  },
-  arrived:   { label:"Confirm & check",     to:"check"    }
-};
+/* The label has to tell you what is left, not what you already did. A resource that has been
+   checked should never ask to be checked again — at that point the only thing outstanding is
+   handing it back, so that is what the button says. */
+function nextStep(r){
+  if(r.status === "committed") return { label:"Mark en route", to:"en_route" };
+  if(r.status === "en_route")  return { label:"Mark arrived",  to:"arrived"  };
+  if(r.status === "arrived"){
+    return r.verified_at
+      ? { label:"Release — job done", to:"released" }
+      : { label:"Confirm arrival & condition", to:"check" };
+  }
+  return null;
+}
+
+/* A live ETA, the way a delivery app does it: counted from when the commitment was made, not a
+   number typed once and left to rot. When it runs out it says so rather than counting into the
+   negative — "2 min overdue" is information; "-2 min" is a bug. */
+function etaText(r){
+  if(!r.eta_minutes || r.status === "arrived") return "";
+  var startedAt = r.updated_at ? new Date(r.updated_at).getTime() : Date.now();
+  var left = Math.round((startedAt + r.eta_minutes*60000 - Date.now())/60000);
+  if(left > 0)  return ' · <b class="eta">ETA ' + left + ' min</b>';
+  if(left === 0) return ' · <b class="eta due">arriving now</b>';
+  return ' · <b class="eta late">' + Math.abs(left) + ' min overdue</b>';
+}
 
 function loadMine(){
   var el = document.getElementById("mine");
@@ -508,7 +564,7 @@ function loadMine(){
 
   var held = rows.filter(function(r){
     return r.held_by && r.held_by.toLowerCase() === who.toLowerCase() &&
-           NEXT_STEP[r.status];
+           nextStep(r);
   });
   if(!held.length){ el.className = ""; el.innerHTML = ""; return; }
 
@@ -527,13 +583,13 @@ function loadMine(){
   el.innerHTML = '<div class="hd">' + esc(who) + ' — ' + held.length +
     (held.length === 1 ? ' resource in play' : ' resources in play') + '</div>' +
     held.map(function(r, i){
-      var n = NEXT_STEP[r.status];
-      var landed = r.status === "arrived";
+      var n = nextStep(r);
+      var landed = r.status === "arrived" && !r.verified_at;
       return '<div class="card' + (landed ? ' landed' : '') + '" data-i="' + i + '">' +
         '<div class="row"><div><div class="name">' + esc(r.name) + '</div>' +
         '<div class="meta">' + esc(r.held_for || "") +
           (r.destination ? (' → ' + esc(r.destination)) : '') +
-          (!landed && r.eta_minutes ? (' · ETA ' + r.eta_minutes + ' min') : '') +
+          etaText(r) +
         '</div></div>' +
         '<span class="pill ' + esc(r.status) + '">' + esc(statusOf(r.status).label) +
         '</span></div>' +
@@ -551,6 +607,12 @@ function loadMine(){
       /* the check is the one step that needs a human to say something, so it opens the sheet;
          everything else is a single fact and commits straight away */
       if(to === "check"){ openStatus(r); return; }
+      if(to === "released"){
+        rpc("advance_resource", { in_id:r.id, in_actor:who, in_to:"released" })
+          .then(function(){ toastMsg("RELEASED · " + r.name + " back to available", "ok"); loadAll(); })
+          .catch(function(e){ toastMsg(e.message, "err"); });
+        return;
+      }
       rpc("advance_resource", { in_id:r.id, in_actor:who, in_to:to })
         .then(function(){
           toastMsg((to === "en_route" ? "EN ROUTE · " : "ARRIVED · ") + r.name +
@@ -715,18 +777,33 @@ function askOpenAI(messages, maxTokens){
   }).then(function(d){ return (d.choices && d.choices[0].message.content) || ""; });
 }
 
-var KINDS = ["pump","generator","light","vehicle","shelter","crew"];
+var KINDS = ["pump","generator","light","vehicle","shelter","crew","apparatus","hazmat",
+             "medical","heavy","barrier","comms","air","water","fuel","k9","drone"];
 
 function interpret(question){
+  /* The mapping is spelled out because the failure mode is subtle and expensive: asked for
+     "light", a model with a vague kind list will happily return a cooling centre, because a
+     cooling centre is a kind of relief and relief is a kind of help. Dispatchers do not think
+     that way. Each line below is how the word is used on a fireground, not in a thesaurus. */
   var sys = "You convert an emergency dispatcher's question into a JSON query against a " +
     "resource registry. Reply with JSON ONLY, no prose, no code fences. Shape: " +
     '{"kinds":[],"status":"available"|"any","place":"","radius_miles":5}. ' +
-    "kinds must be a subset of: " + KINDS.join(", ") + ". " +
-    "Map meaning to kind: water/flooding/pumping -> pump; power/electricity -> generator; " +
-    "dark/visibility/night -> light; transport/evacuate/move people -> vehicle; " +
-    "housing/warming/cooling/beds -> shelter; people/personnel/team/medical -> crew. " +
+    "kinds must be a subset of: " + KINDS.join(", ") + ". Meanings, which are literal: " +
+    "pump = moves water out (flooding, basements, sewer bypass); " +
+    "water = water supply or sewer trucks (tanker, vactor); " +
+    "generator = electrical power; fuel = refuelling equipment; " +
+    "light = ILLUMINATION ONLY — light towers, scene lighting. The word 'light' NEVER means a " +
+    "cooling centre, a shelter or a bus; " +
+    "apparatus = fire engines and ladder trucks; " +
+    "medical = ambulances and patient-care units; " +
+    "crew = people — teams, line crews, personnel; " +
+    "vehicle = moving people or cargo (buses, vans, trucks); " +
+    "heavy = construction plant (loader, backhoe); " +
+    "barrier = traffic control, barricades, message boards; " +
+    "comms = radios and command posts; air = breathing air; hazmat = decon and hazmat; " +
+    "shelter = places for people (warming, cooling, cots); k9 = search dogs; drone = UAS. " +
     "place is a Detroit street, intersection or landmark mentioned, else empty string. " +
-    "If no kind is implied, use an empty array.";
+    "If no kind is clearly implied, use an empty array rather than guessing.";
   return askOpenAI([{role:"system",content:sys},{role:"user",content:question}], 160)
     .then(function(txt){
       var clean = txt.replace(/```json|```/g,"").trim();
@@ -1181,6 +1258,9 @@ document.getElementById("saveAdd").onclick = function(){
     apply();
   }
   function apply(){ sheet.style.setProperty("--sheetY", det[idx] + "px"); }
+  /* A repaint mid-drag is what makes a sheet feel like it is fighting you. While the finger is
+     down, nothing else is allowed to touch the DOM. */
+  window.__sheetDragging = function(){ return dragging; };
 
   grip.addEventListener("pointerdown", function(e){
     dragging = true; moved = false;
@@ -1188,9 +1268,11 @@ document.getElementById("saveAdd").onclick = function(){
     startT = det[idx];
     sheet.classList.add("dragging");
     grip.setPointerCapture(e.pointerId);
+    e.preventDefault();
   });
   grip.addEventListener("pointermove", function(e){
     if(!dragging) return;
+    e.preventDefault();
     var dy = e.clientY - startY;
     /* 3px called almost every tap a drag on a touch screen — a thumb never lands perfectly
        still. 10px is the usual floor for distinguishing intent. */
@@ -1217,10 +1299,15 @@ document.getElementById("saveAdd").onclick = function(){
 })();
 
 map.on("load", function(){ loadAll(); loadRequests(); });
-setInterval(loadRequests, 20000);
+function busy(){ return (window.__sheetDragging && window.__sheetDragging()) ||
+                        document.getElementById("status").classList.contains("on"); }
+setInterval(function(){ if(!busy()) loadRequests(); }, 20000);
 /* Arrivals should surface on their own. Fifteen seconds is frequent enough that a landing feels
    immediate and light enough that it is not a load on the database. */
-setInterval(loadAll, 15000);   // an unanswered request should not need a refresh to appear
+setInterval(function(){ if(!busy() && !document.hidden) loadAll(); }, 15000);
+/* The countdown ticks locally every 30s. Re-fetching the whole registry just to redraw a number
+   would be wasteful and would fight with whatever the user is doing. */
+setInterval(function(){ if(!busy() && !document.hidden) loadMine(); }, 30000);   // an unanswered request should not need a refresh to appear
 </script>
 </body>
 </html>
