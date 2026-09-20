@@ -665,7 +665,12 @@ function progressBar(r){
    it produces. A demo that cannot be told apart from the real thing is the fastest way to lose
    a room, and the honest version is more impressive anyway: it shows you know exactly which
    part is real. */
-function simOn(){ try{ return localStorage.getItem("cay_sim") === "1"; }catch(e){ return false; } }
+/* Deliberately NOT remembered between visits. Demo mode is something you switch on for seven
+   minutes on a stage, not a setting — and a simulator still running because it was left on last
+   week is exactly the kind of thing that makes a demo lie without anyone noticing. Every fresh
+   load starts off, and it takes a tap to enable. */
+var _sim = false;
+function simOn(){ return _sim; }
 function refreshSim(){
   var b = document.getElementById("simBtn");
   if(!b) return;
@@ -676,7 +681,7 @@ function refreshSim(){
     : "Demo mode: stand in for the other agency during a presentation.";
 }
 document.getElementById("simBtn").onclick = function(){
-  try{ localStorage.setItem("cay_sim", simOn() ? "0" : "1"); }catch(e){}
+  _sim = !_sim;
   refreshSim();
   toastMsg(simOn()
     ? "Demo mode on — the other agency's steps will advance on their own, and every one is labelled simulated."
