@@ -172,6 +172,21 @@
     font-size:14px;font-weight:700;font-family:inherit;cursor:pointer;
     background:#5B48B0;color:#fff;letter-spacing:.2px}
   #mine .nx.go{background:#2F9E68;color:#fff}
+  .prog{display:flex;align-items:flex-start;margin:11px 0 2px;padding:0 2px}
+  .pstep{display:flex;flex-direction:column;align-items:center;gap:5px;flex:0 0 auto;width:58px}
+  .pdot{width:11px;height:11px;border-radius:50%;background:rgba(235,235,245,.16);
+    border:2px solid transparent;transition:background .2s}
+  .pstep.done .pdot{background:var(--ready)}
+  .pstep.now .pdot{background:var(--pending);border-color:rgba(232,179,57,.3);
+    box-shadow:0 0 0 4px rgba(232,179,57,.18);animation:ppulse 1.9s ease-in-out infinite}
+  @keyframes ppulse{0%,100%{box-shadow:0 0 0 3px rgba(232,179,57,.20)}
+                    50%{box-shadow:0 0 0 7px rgba(232,179,57,0)}}
+  @media (prefers-reduced-motion:reduce){.pstep.now .pdot{animation:none}}
+  .plab{font-family:var(--tech);font-size:8.5px;letter-spacing:.7px;text-transform:uppercase;
+    color:var(--mute);text-align:center;line-height:1.2}
+  .pstep.now .plab{color:var(--pending)}
+  .pstep.done .plab{color:var(--ready)}
+  .pline{flex:1;height:2px;background:rgba(235,235,245,.14);margin-top:4.5px}
   .eta{color:var(--pending);font-family:var(--tech);font-size:11px}
   .eta.due{color:var(--ready)}
   .eta.late{color:var(--alert)}
@@ -234,7 +249,7 @@
 
 <header>
   <span class="mark">CAY<b>-LINK</b></span>
-  <span class="ver" id="ver">v3.9</span>
+  <span class="ver" id="ver">v4.0</span>
   <span class="demo">Demonstration data</span>
   <span class="sub">Shared resource registry for Detroit emergency response</span>
   <span id="coords" title="Tap to copy">—</span>
@@ -439,6 +454,43 @@ function verifiedBadge(r){
 
 function statusOf(k){ return STATUS[k] || { label:k, color:"#98A1AE" }; }
 
+/* ── the trip line ──
+   A dashed line from where the equipment is to where it is going, with a pin at the far end.
+   "En route" as a word is a claim; a line across the map is a picture, and a picture is what
+   someone reads at a glance from across a room. */
+var _tripIds = [];
+
+function clearTrips(){
+  _tripIds.forEach(function(id){
+    if(map.getLayer(id)) map.removeLayer(id);
+    if(map.getLayer(id + "-head")) map.removeLayer(id + "-head");
+    if(map.getSource(id)) map.removeSource(id);
+  });
+  _tripIds = [];
+}
+
+function drawTrips(){
+  if(!map.isStyleLoaded()) return;
+  clearTrips();
+  rows.forEach(function(r){
+    if(!r.dest_lat || !r.dest_lng) return;
+    if(r.status !== "committed" && r.status !== "en_route") return;
+    var id = "trip-" + r.id;
+    map.addSource(id, { type:"geojson", data:{ type:"Feature", properties:{},
+      geometry:{ type:"LineString", coordinates:[[r.lng, r.lat],[r.dest_lng, r.dest_lat]] } } });
+    map.addLayer({ id:id, type:"line", source:id,
+      layout:{ "line-cap":"round" },
+      paint:{ "line-color": r.status === "en_route" ? "#E8B339" : "#6E56CF",
+              "line-width": 2.5, "line-opacity": 0.85,
+              "line-dasharray": r.status === "en_route" ? [1.5, 1.5] : [3, 2] } });
+    map.addLayer({ id:id + "-head", type:"circle", source:id,
+      paint:{ "circle-radius":5, "circle-color":"#E5484D",
+              "circle-stroke-width":2, "circle-stroke-color":"#0B0D10" },
+      filter:["==","$type","LineString"] });
+    _tripIds.push(id);
+  });
+}
+
 function clearMarkers(){ markers.forEach(function(m){ m.remove(); }); markers = []; }
 
 /* Age, said the way a person would say it out loud. "492 minutes ago" is technically precise
@@ -504,6 +556,7 @@ function render(list){
 
   renderRecent();
   loadMine();
+  try{ drawTrips(); }catch(e){}
 
   rows.forEach(function(r){
     var c = statusOf(r.status).color;
@@ -559,6 +612,38 @@ function etaText(r){
   return ' · <b class="eta late">' + Math.abs(left) + ' min overdue</b>';
 }
 
+/* ── the tracker ──
+   The same idea a delivery app uses, for the same reason: someone waiting wants to see the
+   stage, not read a status word. Four steps, the current one lit, the ones behind it filled.
+   It also makes the chain legible to someone who has never seen the app — which, on a stage in
+   front of judges, is everyone. */
+var STAGES = [
+  { key:"committed", label:"Committed" },
+  { key:"en_route",  label:"En route"  },
+  { key:"arrived",   label:"On site"   },
+  { key:"verified",  label:"Verified"  }
+];
+
+function stageIndex(r){
+  if(r.verified_at) return 3;
+  if(r.status === "arrived")   return 2;
+  if(r.status === "en_route")  return 1;
+  if(r.status === "committed") return 0;
+  return -1;
+}
+
+function progressBar(r){
+  var at = stageIndex(r);
+  if(at < 0) return "";
+  return '<div class="prog">' + STAGES.map(function(st, i){
+    var cls = i < at ? "done" : (i === at ? "now" : "");
+    return '<div class="pstep ' + cls + '">' +
+             '<span class="pdot"></span>' +
+             '<span class="plab">' + esc(st.label) + '</span>' +
+           '</div>';
+  }).join('<span class="pline"></span>') + '</div>';
+}
+
 function loadMine(){
   var el = document.getElementById("mine");
   if(!el) return;
@@ -596,6 +681,7 @@ function loadMine(){
         '</div></div>' +
         '<span class="pill ' + esc(r.status) + '">' + esc(statusOf(r.status).label) +
         '</span></div>' +
+        progressBar(r) +
         '<button class="nx' + (landed ? ' go' : '') + '" data-to="' + n.to + '">' +
           esc(n.label) + '</button></div>';
     }).join("");
@@ -604,6 +690,17 @@ function loadMine(){
     var r = held[+card.dataset.i];
     var b = card.querySelector(".nx");
     if(!b) return;
+    card.onclick = function(){
+      /* Frame the whole journey, not just the resource: the question being asked is "how far
+         away is it", and that is a relationship between two points. */
+      if(r.dest_lat && r.dest_lng){
+        map.fitBounds([[Math.min(r.lng,r.dest_lng), Math.min(r.lat,r.dest_lat)],
+                       [Math.max(r.lng,r.dest_lng), Math.max(r.lat,r.dest_lat)]],
+                      { padding:80, duration:700, maxZoom:15 });
+      } else {
+        map.flyTo({ center:[r.lng, r.lat], zoom:15, duration:700 });
+      }
+    };
     b.onclick = function(ev){
       ev.stopPropagation();
       var to = b.dataset.to;
@@ -1166,13 +1263,21 @@ function wireBody(r){
     var by = val("c_by");
     if(!by){ toastMsg("Who is committing this?", "err"); return; }
     setMe(by);
+    var dest = val("c_dest");
+    /* Geocode the destination as the commitment is made. Without coordinates the destination is
+       a string nobody can see — with them, the trip is drawable, and "where is it going" stops
+       being a question and becomes a line on a map. */
+    tryGeocode(geocodeVariants(dest), 0).then(function(hit){
     rpc("commit_resource", { in_id:r.id, in_actor:by, in_incident:val("c_for"),
-        in_destination:val("c_dest"), in_eta: val("c_eta") ? parseInt(val("c_eta"),10) : null })
+        in_destination:dest,
+        in_dest_lat: hit ? hit.lat : null, in_dest_lng: hit ? hit.lng : null,
+        in_eta: val("c_eta") ? parseInt(val("c_eta"),10) : null })
       .then(function(){
-        after("COMMITTED · " + r.name + " → " + val("c_dest") + " · " +
+        after("COMMITTED · " + r.name + " → " + dest + " · " +
               new Date().toLocaleTimeString([], {hour:"numeric",minute:"2-digit"}));
       })
       .catch(function(e){ toastMsg(e.message, "err"); });
+    });
   });
 
   on("a_enroute", function(){
