@@ -131,6 +131,11 @@
     color:var(--text)}
   .rq .acts .ok{background:var(--ready);border-color:var(--ready);color:#06210f}
   .rq .acts .no{color:var(--alert);border-color:rgba(229,72,77,.45)}
+  .held{background:rgba(110,86,207,.10);border:1px solid rgba(110,86,207,.32);
+    border-radius:10px;padding:10px 12px;margin:2px 0 10px;font-size:13.5px;line-height:1.5}
+  .held b{color:#C4B5FD}
+  .arrived{background:rgba(110,86,207,.15);color:#C4B5FD}
+  /* the commit confirmation is the moment the app has to feel real — loud, timestamped, brief */
   #toast{position:fixed;left:50%;bottom:calc(18px + env(safe-area-inset-bottom,0px));
     transform:translate(-50%,120%);z-index:20;max-width:min(560px,92vw);
     background:#1A1E24;border:1px solid var(--line);border-left:3px solid var(--pending);
@@ -146,7 +151,7 @@
 
 <header>
   <span class="mark">Mutual<b>Aid</b> Detroit</span>
-  <span class="ver" id="ver">v2.0</span>
+  <span class="ver" id="ver">v3.0</span>
   <span class="demo">Demonstration data</span>
   <span id="coords" title="Tap to copy">—</span>
   <button id="aiBtn" title="Plain-language questions">AI</button>
@@ -180,46 +185,17 @@
      at 6pm and committed at 6:40 is the entire point. So changing status is one tap from the
      list, not buried in an edit form: the action that has to happen a hundred times a night is
      the action that has to be cheapest. -->
+<!-- ═══════════ THE CHAIN ═══════════
+     One sheet, and what it shows depends entirely on where the resource is in its life. There is
+     never a menu of statuses to pick from, because picking a status is not a thing anyone does in
+     an incident — they do a thing, and the status follows. Available is never offered: it is what
+     a resource IS when nothing holds it. -->
 <div id="status">
   <div class="modal">
     <h3 id="st_name">Resource</h3>
     <p class="hint" id="st_meta"></p>
-    <div class="stgrid">
-      <button class="stbtn available"      data-s="available">Available</button>
-      <button class="stbtn en_route"       data-s="en_route">En route</button>
-      <button class="stbtn committed"      data-s="committed">Committed</button>
-      <button class="stbtn out_of_service" data-s="out_of_service">Out of service</button>
-    </div>
-    <p class="hint" id="st_note">Updating stamps the time, so everyone else can see how fresh
-    this is.</p>
-    <div class="two" style="margin-top:4px">
-      <button class="btn" id="st_request" style="flex:2">Request this</button>
-      <button class="btn ghost" id="st_close" style="flex:1">Close</button>
-    </div>
-  </div>
-</div>
-
-<!-- ═══════════ REQUEST ═══════════
-     Finding a pump is step zero. What Tony described was being NOTIFIED that a resource is
-     needed — so the request is the product, and the search is how you address it. Both sides
-     see the same record and every state change is timestamped, because the question after an
-     incident is always "when did we ask, and when did they answer". -->
-<div id="req">
-  <div class="modal">
-    <h3 id="rq_title">Request resource</h3>
-    <p class="hint" id="rq_meta"></p>
-    <div class="fld"><label>Requesting agency</label>
-      <input id="rq_by" placeholder="DFD Battalion 5" /></div>
-    <div class="fld"><label>Incident</label>
-      <input id="rq_inc" placeholder="Structure fire, Jefferson &amp; Chene" /></div>
-    <div class="fld"><label>Note (optional)</label>
-      <input id="rq_note" placeholder="Need on scene within 20 min" /></div>
-    <p class="hint">The owning agency sees this against their resource and can accept, decline,
-    or release it. Accepting marks the resource committed automatically.</p>
-    <div class="two">
-      <button class="btn ghost" id="rq_cancel" style="flex:1">Cancel</button>
-      <button class="btn" id="rq_send" style="flex:2">Send request</button>
-    </div>
+    <div id="st_body"></div>
+    <button class="btn ghost" id="st_close" style="width:100%;margin-top:6px">Close</button>
   </div>
 </div>
 
@@ -288,8 +264,9 @@ var CONFIG = {
    constraint allows. Adding a status means schema.sql and this object — nowhere else. */
 var STATUS = {
   available:      { label:"Available",      color:"#3FBF7F" },
-  en_route:       { label:"En route",       color:"#E8B339" },
   committed:      { label:"Committed",      color:"#E5484D" },
+  en_route:       { label:"En route",       color:"#E8B339" },
+  arrived:        { label:"On site",        color:"#6E56CF" },
   out_of_service: { label:"Out of service", color:"#98A1AE" }
 };
 
@@ -735,12 +712,30 @@ function toastMsg(msg){
   _toastT = setTimeout(function(){ t.className = ""; }, 5200);
 }
 
-/* ── changing a status ──
-   PATCH, not a re-insert: the row keeps its identity and its history, and the updated_at trigger
-   in the schema stamps the time automatically. Optimistic UI — the pill changes immediately and
-   rolls back if the write fails — because on a bad connection a commander should never be left
-   wondering whether the tap registered. */
+/* ═══════════ THE COMMITMENT CHAIN ═══════════
+   Every rule below is ALSO enforced in Postgres (commit.sql). The interface asks the right
+   questions; the database refuses the wrong answers. That split is deliberate: a rule that lives
+   only in a button can be clicked around, and in an incident a registry that lies is worse than
+   one that is empty. Whatever the database says is what the user is told — errors come back as
+   plain sentences, not codes. */
 var _stCurrent = null;
+
+function me(){ try{ return localStorage.getItem("cay_agency") || ""; }catch(e){ return ""; } }
+function setMe(v){ try{ localStorage.setItem("cay_agency", v); }catch(e){} }
+
+function rpc(fn, args){
+  return api("rpc/" + fn, { method:"POST", body:JSON.stringify(args) })
+    .then(function(res){
+      var msg = (typeof res === "string") ? res : (res && res[0]) || "ok";
+      if(msg !== "ok" && msg !== null) throw new Error(msg);   // the DB's own sentence
+      return msg;
+    });
+}
+
+function fld(id, label, ph, val){
+  return '<div class="fld"><label>' + label + '</label>' +
+         '<input id="' + id + '" placeholder="' + ph + '" value="' + (val||"") + '"></div>';
+}
 
 function openStatus(r){
   _stCurrent = r;
@@ -748,13 +743,153 @@ function openStatus(r){
   document.getElementById("st_meta").textContent =
     r.agency + (r.capacity ? (" · " + r.capacity) : "") +
     (r.contact ? (" · " + r.contact) : "") +
-    (r.minutes_since_update != null ? (" · updated " + humanAge(r.minutes_since_update, r.updated_at)) : "");
-  Array.prototype.forEach.call(document.querySelectorAll(".stbtn"), function(b){
-    b.classList.toggle("current", b.dataset.s === r.status);
-  });
-  document.getElementById("st_note").textContent =
-    "Updating stamps the time, so everyone else can see how fresh this is.";
+    (r.minutes_since_update != null ? (" · " + humanAge(r.minutes_since_update, r.updated_at)) : "");
+  document.getElementById("st_body").innerHTML = bodyFor(r);
+  wireBody(r);
   document.getElementById("status").classList.add("on");
+}
+
+/* What you can do depends on where it is. One obvious next action, never a list of states. */
+function bodyFor(r){
+  var mine = r.held_by && me() && r.held_by.toLowerCase() === me().toLowerCase();
+
+  if(r.status === "out_of_service"){
+    return '<p class="hint">Out of service' + (r.oos_reason ? (" — " + esc(r.oos_reason)) : "") +
+      '. It will not appear as available until an agency returns it to service.</p>' +
+      '<button class="btn" id="a_back" style="width:100%">Back in service</button>';
+  }
+
+  if(r.status === "available"){
+    return '<p class="hint">Committing takes it out of the available list until it is released. ' +
+      'Three things are required, because they are the first three questions anyone else will ask.</p>' +
+      fld("c_by","Your agency","DFD Battalion 5", me()) +
+      fld("c_for","Incident","Structure fire, Jefferson &amp; Chene") +
+      fld("c_dest","Destination","Jefferson &amp; Chene") +
+      fld("c_eta","ETA in minutes (optional)","20") +
+      '<button class="btn" id="a_commit" style="width:100%;margin-top:4px">Commit this resource</button>' +
+      '<button class="btn ghost" id="a_oos" style="width:100%;margin-top:8px">Report out of service</button>';
+  }
+
+  var held = '<div class="held"><b>' + esc(r.held_by || "Another agency") + '</b> holds this' +
+    (r.held_for ? (' for <b>' + esc(r.held_for) + '</b>') : '') +
+    (r.destination ? ('<br>Destination: <b>' + esc(r.destination) + '</b>') : '') +
+    (r.eta_minutes ? (' · ETA ' + r.eta_minutes + ' min') : '') + '</div>';
+
+  if(!mine){
+    return held + '<p class="hint">Only the holding agency can move this forward. If you need it, ' +
+      'file a request against it.</p>' +
+      fld("q_by","Your agency","DPW Yard 3", me()) +
+      fld("q_note","Why you need it","Flooding at Kercheval") +
+      '<button class="btn ghost" id="a_req" style="width:100%">Request it</button>';
+  }
+
+  if(r.status === "committed"){
+    return held + '<p class="hint">Marking en route tells everyone it has left. The destination is ' +
+      'already set, which is why this step is possible at all.</p>' +
+      '<button class="btn" id="a_enroute" style="width:100%">Mark en route</button>' +
+      '<button class="btn ghost" id="a_release" style="width:100%;margin-top:8px">Release — no longer needed</button>';
+  }
+  if(r.status === "en_route"){
+    return held + '<p class="hint">Mark arrived when it reaches ' + esc(r.destination || "the scene") + '.</p>' +
+      '<button class="btn" id="a_arrived" style="width:100%">Mark arrived</button>';
+  }
+  if(r.status === "arrived"){
+    return held + '<p class="hint">On-site check. A pump that showed up broken is not a delivered ' +
+      'resource, and the registry should say so rather than quietly counting it.</p>' +
+      fld("k_note","Note (optional)","Primed and running") +
+      '<div class="two"><button class="btn" id="a_ok" style="flex:1">Works — in use</button>' +
+      '<button class="btn ghost" id="a_bad" style="flex:1">Not working</button></div>' +
+      '<button class="btn ghost" id="a_release" style="width:100%;margin-top:8px">Release</button>';
+  }
+  return held;
+}
+
+function val(id){ var e = document.getElementById(id); return e ? e.value.trim() : ""; }
+
+function after(msg){
+  closeStatus();
+  toastMsg(msg);
+  loadAll();
+}
+
+function wireBody(r){
+  var on = function(id, fn){ var e = document.getElementById(id); if(e) e.onclick = fn; };
+
+  on("a_commit", function(){
+    var by = val("c_by");
+    if(!by){ toastMsg("Who is committing this?"); return; }
+    setMe(by);
+    rpc("commit_resource", { in_id:r.id, in_actor:by, in_incident:val("c_for"),
+        in_destination:val("c_dest"), in_eta: val("c_eta") ? parseInt(val("c_eta"),10) : null })
+      .then(function(){
+        after("COMMITTED · " + r.name + " → " + val("c_dest") + " · " +
+              new Date().toLocaleTimeString([], {hour:"numeric",minute:"2-digit"}));
+      })
+      .catch(function(e){ toastMsg(e.message); });
+  });
+
+  on("a_enroute", function(){
+    rpc("advance_resource", { in_id:r.id, in_actor:me(), in_to:"en_route" })
+      .then(function(){ after("EN ROUTE · " + r.name + " → " + (r.destination||"scene")); })
+      .catch(function(e){ toastMsg(e.message); });
+  });
+
+  on("a_arrived", function(){
+    rpc("advance_resource", { in_id:r.id, in_actor:me(), in_to:"arrived" })
+      .then(function(){ after("ARRIVED · " + r.name + " at " + (r.destination||"scene")); })
+      .catch(function(e){ toastMsg(e.message); });
+  });
+
+  on("a_ok", function(){
+    rpc("confirm_arrival", { in_id:r.id, in_actor:me(), in_working:true, in_note:val("k_note") })
+      .then(function(){ after("CHECKED · " + r.name + " on site and operational"); })
+      .catch(function(e){ toastMsg(e.message); });
+  });
+
+  on("a_bad", function(){
+    rpc("confirm_arrival", { in_id:r.id, in_actor:me(), in_working:false,
+        in_note: val("k_note") || "failed on-site check" })
+      .then(function(){ after("OUT OF SERVICE · " + r.name + " failed the on-site check"); })
+      .catch(function(e){ toastMsg(e.message); });
+  });
+
+  on("a_release", function(){
+    rpc("advance_resource", { in_id:r.id, in_actor:me(), in_to:"released" })
+      .then(function(){ after("RELEASED · " + r.name + " back to available"); })
+      .catch(function(e){ toastMsg(e.message); });
+  });
+
+  on("a_oos", function(){
+    var why = prompt("Why is it out of service?");
+    if(!why) return;
+    rpc("mark_out_of_service", { in_id:r.id, in_actor: me() || "unattributed", in_reason:why })
+      .then(function(){ after("OUT OF SERVICE · " + r.name); })
+      .catch(function(e){ toastMsg(e.message); });
+  });
+
+  on("a_back", function(){
+    rpc("advance_resource", { in_id:r.id, in_actor: r.held_by || me() || "unattributed",
+        in_to:"released", in_detail:"returned to service" })
+      .then(function(){ after("BACK IN SERVICE · " + r.name); })
+      .catch(function(){
+        // not held by anyone — clear it directly
+        api("resources?id=eq."+r.id, { method:"PATCH", headers:{Prefer:"return=minimal"},
+            body: JSON.stringify({ status:"available", oos_reason:null }) })
+          .then(function(){ after("BACK IN SERVICE · " + r.name); });
+      });
+  });
+
+  on("a_req", function(){
+    var by = val("q_by");
+    if(!by){ toastMsg("Which agency is asking?"); return; }
+    setMe(by);
+    var c = map.getCenter();
+    api("requests", { method:"POST", headers:{Prefer:"return=minimal"},
+      body: JSON.stringify({ resource_id:r.id, requested_by:by, note:val("q_note"),
+                             lat:c.lat, lng:c.lng }) })
+      .then(function(){ after("REQUEST SENT to " + r.held_by); })
+      .catch(function(e){ toastMsg("Couldn't send: " + e.message); });
+  });
 }
 
 function closeStatus(){
@@ -763,135 +898,8 @@ function closeStatus(){
 }
 document.getElementById("st_close").onclick = closeStatus;
 document.getElementById("status").onclick = function(e){
-  if(e.target.id === "status") closeStatus();      // tap the backdrop
+  if(e.target.id === "status") closeStatus();
 };
-
-Array.prototype.forEach.call(document.querySelectorAll(".stbtn"), function(btn){
-  btn.onclick = function(){
-    if(!_stCurrent) return;
-    var r = _stCurrent, next = btn.dataset.s, prev = r.status;
-    if(next === prev){ closeStatus(); return; }
-
-    // optimistic: reflect it now, reconcile after
-    r.status = next;
-    r.minutes_since_update = 0;
-    r.updated_at = new Date().toISOString();
-    render(rows);
-    closeStatus();
-    toastMsg(r.name + " → " + statusOf(next).label);
-
-    api("resources?id=eq." + encodeURIComponent(r.id), {
-      method:"PATCH",
-      headers:{ "Prefer":"return=minimal" },
-      body: JSON.stringify({ status: next })
-    }).catch(function(e){
-      r.status = prev;                              // roll back, and say so
-      render(rows);
-      toastMsg("Couldn't save that change — status put back to " + statusOf(prev).label +
-               ". " + ((e && e.message) || ""));
-    });
-  };
-});
-
-/* ── the request loop ──
-   One rule enforced in the database, not here: answering a request and changing the resource's
-   status are a single action (see answer_request in setup.sql). Two separate writes would drift
-   — someone accepts and forgets to mark the pump committed — and then the map lies to the next
-   commander who reads it. */
-var _rqFor = null;
-
-document.getElementById("st_request").onclick = function(){
-  if(!_stCurrent) return;
-  _rqFor = _stCurrent;
-  document.getElementById("rq_title").textContent = "Request: " + _rqFor.name;
-  document.getElementById("rq_meta").textContent =
-    "Owned by " + _rqFor.agency + (_rqFor.contact ? (" · " + _rqFor.contact) : "");
-  try{ document.getElementById("rq_by").value = localStorage.getItem("ma_agency") || ""; }catch(e){}
-  closeStatus();
-  document.getElementById("req").classList.add("on");
-};
-document.getElementById("rq_cancel").onclick = function(){
-  document.getElementById("req").classList.remove("on");
-};
-document.getElementById("req").onclick = function(e){
-  if(e.target.id === "req") document.getElementById("req").classList.remove("on");
-};
-
-document.getElementById("rq_send").onclick = function(){
-  if(!_rqFor) return;
-  var by = document.getElementById("rq_by").value.trim();
-  if(!by){ toastMsg("Who is requesting? Enter the agency."); return; }
-  try{ localStorage.setItem("ma_agency", by); }catch(e){}   // remember, so the second request is one tap
-  var c = map.getCenter();
-  api("requests", { method:"POST", headers:{ "Prefer":"return=minimal" },
-    body: JSON.stringify({
-      resource_id: _rqFor.id,
-      requested_by: by,
-      incident: document.getElementById("rq_inc").value.trim() || null,
-      note: document.getElementById("rq_note").value.trim() || null,
-      lat: c.lat, lng: c.lng
-    })
-  }).then(function(){
-    document.getElementById("req").classList.remove("on");
-    document.getElementById("rq_note").value = "";
-    toastMsg("Request sent to " + _rqFor.agency + ". They'll see it against their resource.");
-    loadRequests();
-  }).catch(function(e){ toastMsg("Couldn't send: " + ((e && e.message) || "")); });
-};
-
-/* Open requests, newest first. Shown above the registry because an unanswered ask is the only
-   thing here with a person waiting on the other end of it. */
-function loadRequests(){
-  api("requests?select=*&state=eq.pending&order=created_at.desc")
-    .then(renderRequests)
-    .catch(function(){ /* registry still works without this — never block the map on it */ });
-}
-
-function renderRequests(list){
-  var el = document.getElementById("openreqs");
-  if(!el) return;
-  list = list || [];
-  if(!list.length){ el.className = ""; el.innerHTML = ""; return; }
-  el.className = "on";
-  el.innerHTML = '<div class="rhead" style="font-family:var(--tech);font-size:10px;' +
-    'letter-spacing:1.2px;text-transform:uppercase;color:var(--mute);margin:2px 0 7px">' +
-    list.length + ' open request' + (list.length === 1 ? '' : 's') + '</div>' +
-    list.map(function(q){
-      var r = rows.filter(function(x){ return x.id === q.resource_id; })[0];
-      var mins = Math.round((Date.now() - new Date(q.created_at).getTime())/60000);
-      return '<div class="rq" data-id="'+q.id+'">' +
-        '<div class="t">' + esc(r ? r.name : "Resource") + '</div>' +
-        '<div class="m">' + esc(q.requested_by) + ' asked' +
-          (q.incident ? (' · ' + esc(q.incident)) : '') +
-          ' · ' + esc(humanAge(mins, q.created_at)) +
-          (q.note ? ('<br>' + esc(q.note)) : '') + '</div>' +
-        '<div class="acts">' +
-          '<button class="ok" data-a="accepted">Accept</button>' +
-          '<button class="no" data-a="declined">Decline</button>' +
-        '</div></div>';
-    }).join("");
-
-  Array.prototype.forEach.call(el.querySelectorAll(".rq"), function(card){
-    Array.prototype.forEach.call(card.querySelectorAll("button"), function(b){
-      b.onclick = function(){
-        answerRequest(+card.dataset.id, b.dataset.a);
-      };
-    });
-  });
-}
-
-function answerRequest(id, state){
-  api("rpc/answer_request", { method:"POST", headers:{ "Prefer":"return=minimal" },
-      body: JSON.stringify({ in_id:id, in_state:state }) })
-    .then(function(){
-      toastMsg(state === "accepted"
-        ? "Accepted — resource marked committed, requester notified."
-        : "Declined — requester notified, resource unchanged.");
-      loadAll();          // resource status changed underneath us
-      loadRequests();
-    })
-    .catch(function(e){ toastMsg("Couldn't answer: " + ((e && e.message) || "")); });
-}
 
 document.getElementById("addBtn").onclick = function(){
   document.getElementById("add").classList.add("on");
