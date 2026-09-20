@@ -107,6 +107,17 @@
     border:1px solid var(--line);border-radius:999px;padding:3px 9px;cursor:pointer;
     white-space:nowrap}
   #coords:active{color:var(--text);border-color:var(--ready)}
+  /* Demo mode stands in for the other agency's hands. It is labelled everywhere it acts —
+     on the button, on the card, in the toast — because a demo that looks indistinguishable from
+     the real thing is the fastest way to lose a room's trust when someone works it out. */
+  #simBtn{font-family:var(--tech);font-size:10.5px;letter-spacing:1.1px;cursor:pointer;
+    border-radius:999px;padding:4px 10px;background:transparent;color:var(--mute);
+    border:1px solid var(--line)}
+  #simBtn.on{background:rgba(232,179,57,.16);color:var(--pending);
+    border-color:rgba(232,179,57,.5)}
+  .simtag{font-family:var(--tech);font-size:8.5px;letter-spacing:1px;text-transform:uppercase;
+    color:var(--pending);border:1px solid rgba(232,179,57,.45);border-radius:4px;
+    padding:2px 5px;margin-left:7px;vertical-align:middle}
   #aiBtn{font-family:var(--tech);font-size:10.5px;letter-spacing:1.1px;cursor:pointer;
     border-radius:999px;padding:4px 10px;background:transparent;color:var(--mute);
     border:1px solid var(--line)}
@@ -249,10 +260,11 @@
 
 <header>
   <span class="mark">CAY<b>-LINK</b></span>
-  <span class="ver" id="ver">v4.0</span>
+  <span class="ver" id="ver">v4.1</span>
   <span class="demo">Demonstration data</span>
   <span class="sub">Shared resource registry for Detroit emergency response</span>
   <span id="coords" title="Tap to copy">—</span>
+  <button id="simBtn" title="Demo mode">DEMO</button>
   <button id="aiBtn" title="Plain-language questions">AI</button>
 </header>
 
@@ -644,6 +656,61 @@ function progressBar(r){
   }).join('<span class="pline"></span>') + '</div>';
 }
 
+/* ── demo mode ──
+   In a real deployment the next step is taken by a person at another agency: someone at the
+   yard actually rolls the truck and marks it. In a seven-minute pitch that person is not in the
+   room, so this stands in for them — advancing a commitment one stage every twelve seconds, as
+   though the other end were responding.
+   It is off by default, labelled on the button, on every card it touches, and in every message
+   it produces. A demo that cannot be told apart from the real thing is the fastest way to lose
+   a room, and the honest version is more impressive anyway: it shows you know exactly which
+   part is real. */
+function simOn(){ try{ return localStorage.getItem("cay_sim") === "1"; }catch(e){ return false; } }
+function refreshSim(){
+  var b = document.getElementById("simBtn");
+  if(!b) return;
+  b.classList.toggle("on", simOn());
+  b.textContent = simOn() ? "DEMO ON" : "DEMO";
+  b.title = simOn()
+    ? "Demo mode: the other agency's steps advance automatically. Tap to stop."
+    : "Demo mode: stand in for the other agency during a presentation.";
+}
+document.getElementById("simBtn").onclick = function(){
+  try{ localStorage.setItem("cay_sim", simOn() ? "0" : "1"); }catch(e){}
+  refreshSim();
+  toastMsg(simOn()
+    ? "Demo mode on — the other agency's steps will advance on their own, and every one is labelled simulated."
+    : "Demo mode off — every step now needs a real person.");
+  loadMine();
+};
+refreshSim();
+
+var _simAt = {};
+function simTick(){
+  if(!simOn() || busy() || document.hidden) return;
+  var who = me();
+  if(!who) return;
+  var now = Date.now();
+  rows.forEach(function(r){
+    if(!r.held_by || r.held_by.toLowerCase() !== who.toLowerCase()) return;
+    var to = (r.status === "committed") ? "en_route"
+           : (r.status === "en_route")  ? "arrived" : null;
+    if(!to) return;                                   // the on-site check stays human
+    var since = r.updated_at ? new Date(r.updated_at).getTime() : now;
+    if(now - since < 12000) return;                   // twelve seconds per leg
+    if(_simAt[r.id] === r.status) return;
+    _simAt[r.id] = r.status;
+    rpc("advance_resource", { in_id:r.id, in_actor:who, in_to:to })
+      .then(function(){
+        toastMsg("SIMULATED · " + (to === "en_route" ? "the yard marked " : "") +
+                 r.name + " " + (to === "en_route" ? "en route" : "arrived on scene"), "ok");
+        loadAll();
+      })
+      .catch(function(){});
+  });
+}
+setInterval(simTick, 4000);
+
 function loadMine(){
   var el = document.getElementById("mine");
   if(!el) return;
@@ -674,7 +741,8 @@ function loadMine(){
       var n = nextStep(r);
       var landed = r.status === "arrived" && !r.verified_at;
       return '<div class="card' + (landed ? ' landed' : '') + '" data-i="' + i + '">' +
-        '<div class="row"><div><div class="name">' + esc(r.name) + '</div>' +
+        '<div class="row"><div><div class="name">' + esc(r.name) +
+          (simOn() ? '<span class="simtag">Simulated</span>' : '') + '</div>' +
         '<div class="meta">' + esc(r.held_for || "") +
           (r.destination ? (' → ' + esc(r.destination)) : '') +
           etaText(r) +
