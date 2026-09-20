@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>MutualAid Detroit — cross-agency resource visibility</title>
-<meta name="description" content="A shared resource registry for Detroit emergency response. See what every agency has, and where, during an incident." />
+<title>CayLink — cross-agency emergency resource coordination, Detroit</title>
+<meta name="description" content="CayLink — a shared resource registry for Detroit emergency response. See what every agency has, where it is, and who is holding it." />
 <link href="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/5.3.0/maplibre-gl.min.css" rel="stylesheet" />
 <script src="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/5.3.0/maplibre-gl.min.js"></script>
 <style>
@@ -31,13 +31,20 @@
 
   #map{position:absolute;inset:0}
 
-  #sheet{position:absolute;left:0;right:0;bottom:0;z-index:6;max-height:64%;
+  #sheet{position:absolute;left:0;right:0;bottom:0;z-index:6;height:64%;
+    transform:translateY(var(--sheetY,0px));
+    transition:transform .28s cubic-bezier(.32,.72,0,1);
     background:var(--panel);border-top:1px solid var(--line);
     border-radius:18px 18px 0 0;display:flex;flex-direction:column;
     box-shadow:0 -14px 40px rgba(0,0,0,.5);
     padding-bottom:env(safe-area-inset-bottom,0px)}
-  .grip{width:38px;height:4px;border-radius:3px;background:rgba(235,235,245,.22);
-    margin:9px auto 4px;flex:0 0 auto}
+  /* The grip is a real handle: drag it, or tap it to cycle. Collapsing it is also how you get a
+     full-screen map — one mechanic, two needs, rather than a separate expand button. */
+  .grip{width:100%;padding:9px 0 5px;flex:0 0 auto;cursor:grab;touch-action:none}
+  .grip::after{content:"";display:block;width:38px;height:4px;border-radius:3px;
+    background:rgba(235,235,245,.22);margin:0 auto}
+  #sheet.dragging{transition:none}
+  #sheet.dragging .grip::after{width:54px;background:rgba(235,235,245,.5)}
   .bar{display:flex;gap:8px;align-items:center;padding:6px 14px 10px;flex-wrap:wrap;flex:0 0 auto}
   .bar input,.bar select{background:var(--panel2);border:1px solid var(--line);color:var(--text);
     border-radius:9px;padding:9px 10px;font-size:14px;font-family:inherit}
@@ -131,18 +138,43 @@
     color:var(--text)}
   .rq .acts .ok{background:var(--ready);border-color:var(--ready);color:#06210f}
   .rq .acts .no{color:var(--alert);border-color:rgba(229,72,77,.45)}
+  .sub{font-size:11.5px;color:var(--mute);flex-basis:100%;margin-top:-2px}
+  #mine{padding:0 14px;display:none}
+  #mine.on{display:block}
+  #mine .card{border-color:rgba(110,86,207,.4);background:rgba(110,86,207,.09)}
+  #mine .hd{font-family:var(--tech);font-size:10px;letter-spacing:1.2px;text-transform:uppercase;
+    color:var(--mute);margin:2px 0 7px}
+  #mine .nx{margin-top:9px;width:100%;border:none;border-radius:9px;padding:10px;
+    font-size:13.5px;font-weight:700;font-family:inherit;cursor:pointer;
+    background:#6E56CF;color:#fff}
+  .fld{position:relative}
+  .acbox{display:none;position:absolute;left:0;right:0;top:100%;z-index:12;margin-top:4px;
+    background:#1A1E24;border:1px solid var(--line);border-radius:10px;overflow:hidden;
+    box-shadow:0 12px 30px rgba(0,0,0,.5)}
+  .acbox.on{display:block}
+  .acrow{padding:10px 12px;font-size:13.5px;cursor:pointer;color:var(--mute);
+    border-bottom:1px solid rgba(235,235,245,.06)}
+  .acrow:last-child{border-bottom:none}
+  .acrow b{color:var(--text);font-family:var(--tech);font-size:12px;margin-right:6px}
+  .acrow:active{background:var(--panel2)}
   .held{background:rgba(110,86,207,.10);border:1px solid rgba(110,86,207,.32);
     border-radius:10px;padding:10px 12px;margin:2px 0 10px;font-size:13.5px;line-height:1.5}
   .held b{color:#C4B5FD}
   .arrived{background:rgba(110,86,207,.15);color:#C4B5FD}
   /* the commit confirmation is the moment the app has to feel real — loud, timestamped, brief */
-  #toast{position:fixed;left:50%;bottom:calc(18px + env(safe-area-inset-bottom,0px));
-    transform:translate(-50%,120%);z-index:20;max-width:min(560px,92vw);
+  /* Moved from the bottom to the top. The bottom of this screen holds the sheet, the list and
+     the user's thumb; the top is empty map. It is also where the eye lands after a sheet closes,
+     which is exactly when a confirmation needs to be read. */
+  #toast{position:fixed;left:50%;top:calc(var(--hdrH,74px) + env(safe-area-inset-top,0px));
+    transform:translate(-50%,-160%);z-index:30;max-width:min(620px,94vw);width:max-content;
     background:#1A1E24;border:1px solid var(--line);border-left:3px solid var(--pending);
     color:var(--text);border-radius:11px;padding:11px 14px;font-size:13.5px;line-height:1.45;
-    box-shadow:0 10px 34px rgba(0,0,0,.55);transition:transform .26s cubic-bezier(.32,.72,0,1);
-    pointer-events:none}
+    box-shadow:0 12px 34px rgba(0,0,0,.55);transition:transform .26s cubic-bezier(.32,.72,0,1);
+    pointer-events:none;display:flex;gap:10px;align-items:flex-start}
   #toast.on{transform:translate(-50%,0)}
+  #toast.ok{border-left-color:var(--ready)}
+  #toast.err{border-left-color:var(--alert);pointer-events:auto;cursor:pointer}
+  #toast .x{font-family:var(--tech);font-size:11px;color:var(--mute);margin-left:4px}
 </style>
 </head>
 <body>
@@ -150,9 +182,10 @@
 <div id="map"></div>
 
 <header>
-  <span class="mark">Mutual<b>Aid</b> Detroit</span>
-  <span class="ver" id="ver">v3.0</span>
+  <span class="mark">Cay<b>Link</b></span>
+  <span class="ver" id="ver">v3.2</span>
   <span class="demo">Demonstration data</span>
+  <span class="sub">Shared resource registry for Detroit emergency response</span>
   <span id="coords" title="Tap to copy">—</span>
   <button id="aiBtn" title="Plain-language questions">AI</button>
 </header>
@@ -176,6 +209,9 @@
   <!-- Open requests sit ABOVE everything. An unanswered ask is the only thing in this app with
        someone waiting on the other end of it. -->
   <div id="openreqs"></div>
+  <!-- A commit is a receipt, not a notification: if your agency is holding something, that fact
+       should stay on screen with its next action, not scroll away behind a timer. -->
+  <div id="mine"></div>
   <div id="list"><div class="empty">Loading resources…</div></div>
 </div>
 
@@ -253,7 +289,7 @@ var CONFIG = {
      function and the key never reaches a browser at all. But it is honest for a five-day build,
      it keeps a real credential out of a public repo, and anyone cloning this repo supplies
      their own key rather than spending mine. */
-  openaiKey: (function(){ try{ return localStorage.getItem("ma_openai_key") || ""; }catch(e){ return ""; } })(),
+  openaiKey: (function(){ try{ return localStorage.getItem("cay_openai_key") || ""; }catch(e){ return ""; } })(),
   center: [-83.0458, 42.3314],
   zoom: 11.4,
   radiusM: 8000,
@@ -374,6 +410,7 @@ function render(list){
   }).join("");
 
   renderRecent();
+  loadMine();
 
   rows.forEach(function(r){
     var c = statusOf(r.status).color;
@@ -395,6 +432,54 @@ function render(list){
 
 /* Anything touched in the last hour. Deliberately a strip of chips rather than a second list:
    it is a glance, not a screen. */
+/* What YOUR agency is holding right now, with its next action one tap away. This is the
+   difference between a form you filled in and a system you are operating: the commitment stays
+   in front of you until it is finished. */
+function loadMine(){
+  var el = document.getElementById("mine");
+  if(!el) return;
+  var who = me();
+  if(!who){ el.className = ""; el.innerHTML = ""; return; }
+  var held = rows.filter(function(r){
+    return r.held_by && r.held_by.toLowerCase() === who.toLowerCase();
+  });
+  if(!held.length){ el.className = ""; el.innerHTML = ""; return; }
+  el.className = "on";
+  var NEXT = { committed:["Mark en route","en_route"], en_route:["Mark arrived","arrived"] };
+  el.innerHTML = '<div class="hd">' + esc(who) + ' is holding ' + held.length +
+    (held.length === 1 ? ' resource' : ' resources') + '</div>' +
+    held.map(function(r, i){
+      var n = NEXT[r.status];
+      return '<div class="card" data-i="' + i + '">' +
+        '<div class="row"><div><div class="name">' + esc(r.name) + '</div>' +
+        '<div class="meta">' + esc(r.held_for || "") +
+          (r.destination ? (' → ' + esc(r.destination)) : '') +
+          (r.eta_minutes ? (' · ETA ' + r.eta_minutes + 'm') : '') + '</div></div>' +
+        '<span class="pill ' + esc(r.status) + '">' + esc(statusOf(r.status).label) + '</span></div>' +
+        (n ? '<button class="nx" data-to="' + n[1] + '">' + n[0] + '</button>'
+           : '<button class="nx" data-to="check">On-site check</button>') +
+        '</div>';
+    }).join("");
+
+  Array.prototype.forEach.call(el.querySelectorAll(".card"), function(card){
+    var r = held[+card.dataset.i];
+    var b = card.querySelector(".nx");
+    if(!b) return;
+    b.onclick = function(ev){
+      ev.stopPropagation();
+      var to = b.dataset.to;
+      if(to === "check"){ openStatus(r); return; }     // the check needs a note and a verdict
+      rpc("advance_resource", { in_id:r.id, in_actor:who, in_to:to })
+        .then(function(){
+          toastMsg((to === "en_route" ? "EN ROUTE · " : "ARRIVED · ") + r.name +
+                   " · " + new Date().toLocaleTimeString([], {hour:"numeric",minute:"2-digit"}), "ok");
+          loadAll();
+        })
+        .catch(function(e){ toastMsg(e.message, "err"); });
+    };
+  });
+}
+
 function renderRecent(){
   var el = document.getElementById("recent");
   if(!el) return;
@@ -608,7 +693,7 @@ document.getElementById("aiBtn").onclick = function(){
   if(CONFIG.openaiKey){
     if(confirm("Remove the stored OpenAI key from this browser?")){
       CONFIG.openaiKey = "";
-      try{ localStorage.removeItem("ma_openai_key"); }catch(e){}
+      try{ localStorage.removeItem("cay_openai_key"); }catch(e){}
       refreshAiBtn();
       toastMsg("Key removed. Search still works — it just won't answer in plain language.");
     }
@@ -620,7 +705,7 @@ document.getElementById("aiBtn").onclick = function(){
   k = k.trim();
   if(k.indexOf("sk-") !== 0){ toastMsg("That doesn't look like an OpenAI key — it should start with sk-"); return; }
   CONFIG.openaiKey = k;
-  try{ localStorage.setItem("ma_openai_key", k); }catch(e){}
+  try{ localStorage.setItem("cay_openai_key", k); }catch(e){}
   refreshAiBtn();
   toastMsg("AI on. Try: what can put water on a fire near Chene?");
 };
@@ -700,16 +785,21 @@ document.getElementById("q").addEventListener("keydown", function(e){
 });
 
 var _toastT = null;
-function toastMsg(msg){
+/* Not every message deserves the same treatment. An error is something the user must act on, so
+   it waits to be dismissed. A confirmation is a receipt and holds long enough to be read. An
+   informational note gets out of the way. One function, three behaviours, chosen by the caller. */
+function toastMsg(msg, kind){
   var t = document.getElementById("toast");
-  if(!t){
-    t = document.createElement("div"); t.id = "toast";
-    document.body.appendChild(t);
-  }
-  t.textContent = msg;
-  t.className = "on";
+  if(!t){ t = document.createElement("div"); t.id = "toast"; document.body.appendChild(t); }
+  kind = kind || "info";
+  t.innerHTML = '<span>' + esc(msg) + '</span>' +
+                (kind === "err" ? '<span class="x">TAP TO DISMISS</span>' : '');
+  t.className = "on " + kind;
   clearTimeout(_toastT);
-  _toastT = setTimeout(function(){ t.className = ""; }, 5200);
+  if(kind !== "err"){
+    _toastT = setTimeout(function(){ t.className = kind; }, kind === "ok" ? 6000 : 3500);
+  }
+  t.onclick = function(){ clearTimeout(_toastT); t.className = kind; };
 }
 
 /* ═══════════ THE COMMITMENT CHAIN ═══════════
@@ -719,6 +809,62 @@ function toastMsg(msg){
    one that is empty. Whatever the database says is what the user is told — errors come back as
    plain sentences, not codes. */
 var _stCurrent = null;
+
+/* ── agencies: abbreviations and suggestions ──
+   Nobody in an incident types "Detroit Department of Public Works". They type DPW. So the list
+   carries both, matching on either, and suggestions appear as you type. Fewer keystrokes is the
+   small win; the real one is fewer variant spellings of the same agency in the data — "DFD Eng
+   30" and "DFD Engine 30" are two agencies to a database and one to a human. */
+var AGENCIES = [
+  ["DFD",   "Detroit Fire Department"],
+  ["DPD",   "Detroit Police Department"],
+  ["DPW",   "Detroit Public Works"],
+  ["DDOT",  "Detroit Department of Transportation"],
+  ["EMS",   "Detroit EMS"],
+  ["DTE",   "DTE Energy"],
+  ["DWSD",  "Detroit Water & Sewerage"],
+  ["GSD",   "General Services Department"],
+  ["HOMELAND", "Detroit Homeland Security & Emergency Management"],
+  ["MSP",   "Michigan State Police"],
+  ["MDOT",  "Michigan DOT"],
+  ["WCEM",  "Wayne County Emergency Management"],
+  ["OCEM",  "Oakland County Emergency Management"],
+  ["MCEM",  "Macomb County Emergency Management"]
+];
+
+function agencyMatches(q){
+  q = (q||"").trim().toLowerCase();
+  if(!q) return [];
+  return AGENCIES.filter(function(a){
+    return a[0].toLowerCase().indexOf(q) === 0 ||
+           a[1].toLowerCase().indexOf(q) > -1;
+  }).slice(0,5);
+}
+
+/* Attach suggestions to any input. Deliberately a plain list under the field rather than a
+   native datalist: datalist renders differently on every browser and is unreliable on iOS, and
+   this has to behave the same on whatever machine is plugged into the projector. */
+function attachAgency(inputId){
+  var inp = document.getElementById(inputId);
+  if(!inp) return;
+  var box = document.createElement("div");
+  box.className = "acbox";
+  inp.parentNode.appendChild(box);
+  function close(){ box.className = "acbox"; box.innerHTML = ""; }
+  inp.addEventListener("input", function(){
+    var m = agencyMatches(inp.value);
+    if(!m.length){ close(); return; }
+    box.className = "acbox on";
+    box.innerHTML = m.map(function(a){
+      return '<div class="acrow" data-v="' + esc(a[0]) + '"><b>' + esc(a[0]) + '</b> ' +
+             esc(a[1]) + '</div>';
+    }).join("");
+    Array.prototype.forEach.call(box.querySelectorAll(".acrow"), function(r){
+      r.onclick = function(){ inp.value = r.dataset.v; close(); inp.focus(); };
+    });
+  });
+  inp.addEventListener("blur", function(){ setTimeout(close, 180); });
+}
 
 function me(){ try{ return localStorage.getItem("cay_agency") || ""; }catch(e){ return ""; } }
 function setMe(v){ try{ localStorage.setItem("cay_agency", v); }catch(e){} }
@@ -806,18 +952,15 @@ function bodyFor(r){
 
 function val(id){ var e = document.getElementById(id); return e ? e.value.trim() : ""; }
 
-function after(msg){
-  closeStatus();
-  toastMsg(msg);
-  loadAll();
-}
+function after(msg){ closeStatus(); toastMsg(msg, "ok"); loadAll(); loadMine(); }
 
 function wireBody(r){
+  attachAgency("c_by"); attachAgency("q_by");
   var on = function(id, fn){ var e = document.getElementById(id); if(e) e.onclick = fn; };
 
   on("a_commit", function(){
     var by = val("c_by");
-    if(!by){ toastMsg("Who is committing this?"); return; }
+    if(!by){ toastMsg("Who is committing this?", "err"); return; }
     setMe(by);
     rpc("commit_resource", { in_id:r.id, in_actor:by, in_incident:val("c_for"),
         in_destination:val("c_dest"), in_eta: val("c_eta") ? parseInt(val("c_eta"),10) : null })
@@ -825,38 +968,38 @@ function wireBody(r){
         after("COMMITTED · " + r.name + " → " + val("c_dest") + " · " +
               new Date().toLocaleTimeString([], {hour:"numeric",minute:"2-digit"}));
       })
-      .catch(function(e){ toastMsg(e.message); });
+      .catch(function(e){ toastMsg(e.message, "err"); });
   });
 
   on("a_enroute", function(){
     rpc("advance_resource", { in_id:r.id, in_actor:me(), in_to:"en_route" })
       .then(function(){ after("EN ROUTE · " + r.name + " → " + (r.destination||"scene")); })
-      .catch(function(e){ toastMsg(e.message); });
+      .catch(function(e){ toastMsg(e.message, "err"); });
   });
 
   on("a_arrived", function(){
     rpc("advance_resource", { in_id:r.id, in_actor:me(), in_to:"arrived" })
       .then(function(){ after("ARRIVED · " + r.name + " at " + (r.destination||"scene")); })
-      .catch(function(e){ toastMsg(e.message); });
+      .catch(function(e){ toastMsg(e.message, "err"); });
   });
 
   on("a_ok", function(){
     rpc("confirm_arrival", { in_id:r.id, in_actor:me(), in_working:true, in_note:val("k_note") })
       .then(function(){ after("CHECKED · " + r.name + " on site and operational"); })
-      .catch(function(e){ toastMsg(e.message); });
+      .catch(function(e){ toastMsg(e.message, "err"); });
   });
 
   on("a_bad", function(){
     rpc("confirm_arrival", { in_id:r.id, in_actor:me(), in_working:false,
         in_note: val("k_note") || "failed on-site check" })
       .then(function(){ after("OUT OF SERVICE · " + r.name + " failed the on-site check"); })
-      .catch(function(e){ toastMsg(e.message); });
+      .catch(function(e){ toastMsg(e.message, "err"); });
   });
 
   on("a_release", function(){
     rpc("advance_resource", { in_id:r.id, in_actor:me(), in_to:"released" })
       .then(function(){ after("RELEASED · " + r.name + " back to available"); })
-      .catch(function(e){ toastMsg(e.message); });
+      .catch(function(e){ toastMsg(e.message, "err"); });
   });
 
   on("a_oos", function(){
@@ -864,7 +1007,7 @@ function wireBody(r){
     if(!why) return;
     rpc("mark_out_of_service", { in_id:r.id, in_actor: me() || "unattributed", in_reason:why })
       .then(function(){ after("OUT OF SERVICE · " + r.name); })
-      .catch(function(e){ toastMsg(e.message); });
+      .catch(function(e){ toastMsg(e.message, "err"); });
   });
 
   on("a_back", function(){
@@ -881,14 +1024,14 @@ function wireBody(r){
 
   on("a_req", function(){
     var by = val("q_by");
-    if(!by){ toastMsg("Which agency is asking?"); return; }
+    if(!by){ toastMsg("Which agency is asking?", "err"); return; }
     setMe(by);
     var c = map.getCenter();
     api("requests", { method:"POST", headers:{Prefer:"return=minimal"},
       body: JSON.stringify({ resource_id:r.id, requested_by:by, note:val("q_note"),
                              lat:c.lat, lng:c.lng }) })
       .then(function(){ after("REQUEST SENT to " + r.held_by); })
-      .catch(function(e){ toastMsg("Couldn't send: " + e.message); });
+      .catch(function(e){ toastMsg("Couldn't send: " + e.message, "err"); });
   });
 }
 
@@ -930,6 +1073,55 @@ document.getElementById("saveAdd").onclick = function(){
     })
     .catch(function(e){ alert("Could not post: " + (e && e.message)); });
 };
+
+/* ── sheet detents ──
+   Three positions: full (list work), half (map and list together), peek (search only, map nearly
+   full screen). Dragging and tapping both land on the same three, so there is never a state you
+   can get into by dragging that you cannot get back out of by tapping. */
+(function(){
+  var sheet = document.getElementById("sheet");
+  var grip  = sheet.querySelector(".grip");
+  var det = [], idx = 1, startY = 0, startT = 0, dragging = false, moved = false;
+
+  function measure(){
+    var h = sheet.offsetHeight;
+    det = [0, Math.round(h * 0.45), h - 108];   // full, half, peek
+    if(idx >= det.length) idx = det.length - 1;
+    apply();
+  }
+  function apply(){ sheet.style.setProperty("--sheetY", det[idx] + "px"); }
+
+  grip.addEventListener("pointerdown", function(e){
+    dragging = true; moved = false;
+    startY = e.clientY;
+    startT = det[idx];
+    sheet.classList.add("dragging");
+    grip.setPointerCapture(e.pointerId);
+  });
+  grip.addEventListener("pointermove", function(e){
+    if(!dragging) return;
+    var dy = e.clientY - startY;
+    if(Math.abs(dy) > 3) moved = true;
+    var y = Math.max(det[0], Math.min(det[det.length-1], startT + dy));
+    sheet.style.setProperty("--sheetY", y + "px");
+  });
+  function end(){
+    if(!dragging) return;
+    dragging = false;
+    sheet.classList.remove("dragging");
+    if(!moved){ idx = (idx + 1) % det.length; apply(); return; }   // tap cycles
+    var cur = parseFloat(getComputedStyle(sheet).getPropertyValue("--sheetY")) || 0;
+    var best = 0;
+    det.forEach(function(d, i){ if(Math.abs(d - cur) < Math.abs(det[best] - cur)) best = i; });
+    idx = best; apply();
+  }
+  grip.addEventListener("pointerup", end);
+  grip.addEventListener("pointercancel", end);
+
+  window.addEventListener("resize", measure);
+  measure();
+  setTimeout(measure, 300);
+})();
 
 map.on("load", function(){ loadAll(); loadRequests(); });
 setInterval(loadRequests, 20000);   // an unanswered request should not need a refresh to appear
